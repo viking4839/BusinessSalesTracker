@@ -9,18 +9,30 @@ import {
   Alert,
   RefreshControl,
   StatusBar,
+  Switch,
+  AppState,
+  DeviceEventEmitter,
 } from 'react-native';
-import { DollarSign, TrendingUp, TrendingDown, Clock, Plus, Search } from 'lucide-react-native';
+import {
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  BarChart3,
+  Menu,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Wallet,
+  Plus,
+  Eye,
+  EyeOff,
+} from 'lucide-react-native';
 import SMSReader from '../services/SMSReader';
 import TransactionStorage from '../utils/TransactionStorage';
-import { COLORS, SPACING, TYPOGRAPHY, SHADOWS } from '../styles/Theme';
-import Card from '../components/Card';
-import MetricCard from '../components/MetricCard';
-import TransactionItem from '../components/TransactionItem';
+import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import BankCard from '../components/BankCard';
-import AddCashSaleButton from '../components/AddCashSaleButton';
 import AddCashSaleDialog from '../components/AddCashSaleDialog';
-import EnhancedHeader from '../components/EnhancedHeader';
+import { useFocusEffect } from '@react-navigation/native';
 
 const { width } = Dimensions.get('window');
 
@@ -35,19 +47,39 @@ const HomeScreen = ({ navigation, route }) => {
   const [weekRevenue, setWeekRevenue] = useState(0);
   const [monthRevenue, setMonthRevenue] = useState(0);
   const [bankStats, setBankStats] = useState({});
+  const [todayDate, setTodayDate] = useState('');
+  const [isRevenueVisible, setIsRevenueVisible] = useState(true);
+  const [transactionCount, setTransactionCount] = useState(0);
+  const [businessTransactionCount, setBusinessTransactionCount] = useState(0);
+  const [activeBanks, setActiveBanks] = useState([]);
+  const [appState, setAppState] = useState(AppState.currentState);
+  const [yesterdayRevenue, setYesterdayRevenue] = useState(0);
 
-  // Load transactions on mount
+  // Initialize on mount
   useEffect(() => {
+    setTodayDate(getTodayDate());
     loadStoredTransactions();
     requestSMSPermission();
+
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (appState.match(/inactive|background/) && nextAppState === 'active') {
+        console.log('📱 App came to foreground, refreshing data');
+        loadStoredTransactions();
+      }
+      setAppState(nextAppState);
+    });
+
+    return () => subscription.remove();
   }, []);
 
-  // Recalculate metrics when transactions change
-  useEffect(() => {
-    calculateMetrics();
-  }, [transactions, businessTransactions]);
+  // Refresh when screen focuses
+  useFocusEffect(
+    useCallback(() => {
+      loadStoredTransactions();
+    }, [])
+  );
 
-  // Handle new sale from route params
+  // Handle new manual sales from route params
   useEffect(() => {
     if (route.params?.newSale) {
       handleNewManualSale(route.params.newSale);
@@ -55,13 +87,49 @@ const HomeScreen = ({ navigation, route }) => {
     }
   }, [route.params?.newSale]);
 
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('transactions:cleared', () => {
+      setTransactions([]);
+      setBusinessTransactions([]);
+      setActiveBanks([]);
+      setTodayRevenue(0);
+      setWeekRevenue(0);
+      setMonthRevenue(0);
+    });
+    return () => sub.remove();
+  }, []);
+
+  const getTodayDate = () => {
+    const today = new Date();
+    return today.toLocaleDateString('en-US', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+  };
+
   const loadStoredTransactions = async () => {
     try {
       const stored = await TransactionStorage.loadTransactions();
+      if (!stored || stored.length === 0) {
+        setTransactions([]);
+        setBusinessTransactions([]);
+        setActiveBanks([]);
+        setTransactionCount(0);
+        setBusinessTransactionCount(0);
+        setTodayRevenue(0);
+        setWeekRevenue(0);
+        setMonthRevenue(0);
+        setYesterdayRevenue(0);
+        return;
+      }
       setTransactions(stored);
       filterBusinessTransactions(stored);
+      calculateMetrics(stored);
+      setActiveBanks(buildActiveBanks(stored));
     } catch (error) {
-      console.error('Error loading transactions:', error);
+      console.error('loadStoredTransactions error:', error);
     }
   };
 
@@ -69,9 +137,21 @@ const HomeScreen = ({ navigation, route }) => {
     try {
       const granted = await SMSReader.requestPermission();
       setPermissionStatus(granted ? 'granted' : 'denied');
+      console.log('📱 SMS Permission:', granted ? 'Granted' : 'Denied');
     } catch (error) {
-      console.error('Permission request error:', error);
+      console.error('❌ Permission request error:', error);
       setPermissionStatus('error');
+    }
+  };
+
+  const handleAutoTrackingToggle = async (value) => {
+    if (value) {
+      // Turn ON - Scan SMS
+      await handleScanSMS();
+    } else {
+      // Turn OFF - Just update UI state
+      setIsScanning(false);
+      Alert.alert('Auto Tracking Paused', 'SMS scanning has been stopped');
     }
   };
 
@@ -89,35 +169,174 @@ const HomeScreen = ({ navigation, route }) => {
     }
 
     setIsScanning(true);
+    console.log('🔍 Starting SMS scan...');
+
     try {
+      // Scan last 200 SMS messages
       const scannedTransactions = await SMSReader.scanRecentTransactions(200);
+      console.log(`📨 Scanned ${scannedTransactions.length} transactions from SMS`);
 
-      // Merge with existing transactions (avoid duplicates)
-      const existingIds = new Set(transactions.map(t => t.id));
+      // Get existing transactions
+      const existingTransactions = await TransactionStorage.loadTransactions();
+      const existingIds = new Set(existingTransactions.map(t => t.id));
+
+      // Filter out duplicates
       const newTransactions = scannedTransactions.filter(t => !existingIds.has(t.id));
-
-      const mergedTransactions = [...newTransactions, ...transactions];
-
-      setTransactions(mergedTransactions);
-      await TransactionStorage.saveTransactions(mergedTransactions);
-      filterBusinessTransactions(mergedTransactions);
+      console.log(`✨ Found ${newTransactions.length} new transactions`);
 
       if (newTransactions.length > 0) {
-        Alert.alert('Success', `Found ${newTransactions.length} new transactions!`);
+        // Merge new with existing
+        const mergedTransactions = [...newTransactions, ...existingTransactions];
+
+        // Save to storage
+        await TransactionStorage.saveTransactions(mergedTransactions);
+
+        // Update UI
+        setTransactions(mergedTransactions);
+        filterBusinessTransactions(mergedTransactions);
+        calculateMetrics(mergedTransactions);
+        setActiveBanks(buildActiveBanks(mergedTransactions));
+
+        Alert.alert(
+          '✅ Scan Complete',
+          `Found ${newTransactions.length} new transactions!\n\n` +
+          `Business income: ${newTransactions.filter(t => t.amount > 0).length} transactions`,
+          [{ text: 'Great!' }]
+        );
       } else {
-        Alert.alert('No New Transactions', 'All SMS transactions already scanned.');
+        Alert.alert(
+          'Scan Complete',
+          'No new transactions found. All SMS already scanned.',
+          [{ text: 'OK' }]
+        );
       }
     } catch (error) {
-      Alert.alert('Error', error.message);
+      console.error('❌ SMS Scan Error:', error);
+      Alert.alert('Error', error.message || 'Failed to scan SMS');
     } finally {
       setIsScanning(false);
     }
   };
 
   const filterBusinessTransactions = (allTransactions) => {
-    // Filter for business transactions (received money only for now)
-    const business = allTransactions.filter(t => t.amount > 0 && t.source === 'sms_scan');
+    // Business transactions are incoming payments (amount > 0)
+    const business = allTransactions.filter(t => t.amount > 0);
     setBusinessTransactions(business);
+    setBusinessTransactionCount(business.length);
+    setTransactionCount(allTransactions.length);
+
+    console.log(`📊 Filtered: ${business.length} business transactions out of ${allTransactions.length} total`);
+  };
+
+  const calculateMetrics = (allTransactions) => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+    const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    let todayTotal = 0;
+    let yesterdayTotal = 0;
+    let weekTotal = 0;
+    let monthTotal = 0;
+    const banks = {};
+
+    allTransactions.forEach(transaction => {
+      const transactionDate = new Date(transaction.timestamp);
+      const amount = Math.abs(transaction.amount);
+
+      // Only count incoming payments (positive amounts)
+      if (transaction.amount > 0) {
+        if (transactionDate >= todayStart) {
+          todayTotal += amount;
+        }
+        if (transactionDate >= yesterdayStart && transactionDate < todayStart) {
+          yesterdayTotal += amount;
+        }
+        if (transactionDate >= weekStart) {
+          weekTotal += amount;
+        }
+        if (transactionDate >= monthStart) {
+          monthTotal += amount;
+        }
+
+        // Track by bank
+        const bankName = transaction.bank || 'Unknown';
+        if (!banks[bankName]) {
+          banks[bankName] = { count: 0, total: 0 };
+        }
+        banks[bankName].count++;
+        banks[bankName].total += amount;
+      }
+    });
+
+    setTodayRevenue(todayTotal);
+    setYesterdayRevenue(yesterdayTotal);
+    setWeekRevenue(weekTotal);
+    setMonthRevenue(monthTotal);
+    setBankStats(banks);
+
+    console.log(`💰 Metrics: Today=${todayTotal}, Yesterday=${yesterdayTotal}, Week=${weekTotal}, Month=${monthTotal}`);
+  };
+
+  const buildActiveBanks = (transactions) => {
+    const bankMap = new Map();
+
+    transactions.forEach(t => {
+      if (!t?.bank) return;
+
+      const bankName = t.bank.trim();
+      const timestamp = new Date(t.timestamp || Date.now());
+
+      const entry = bankMap.get(bankName) || {
+        name: bankName,
+        active: true,
+        transactionCount: 0,
+        lastActivityDate: null,
+        color: getBankColor(bankName)
+      };
+
+      entry.transactionCount++;
+      if (!entry.lastActivityDate || timestamp > entry.lastActivityDate) {
+        entry.lastActivityDate = timestamp;
+      }
+
+      bankMap.set(bankName, entry);
+    });
+
+    const formatLastActivity = (date) => {
+      if (!date) return null;
+      const diffMs = Date.now() - date.getTime();
+      const mins = Math.floor(diffMs / 60000);
+
+      if (mins < 1) return 'Just now';
+      if (mins < 60) return `${mins}m ago`;
+
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+
+      const days = Math.floor(hrs / 24);
+      return `${days}d ago`;
+    };
+
+    return Array.from(bankMap.values()).map(entry => ({
+      ...entry,
+      lastActivity: formatLastActivity(entry.lastActivityDate)
+    }));
+  };
+
+  const getBankColor = (bankName) => {
+    const colors = {
+      'M-Pesa': '#16A34A',
+      'Equity Bank': '#DC2626',
+      'Co-operative Bank': '#F97316',
+      'KCB': '#65A30D',
+      'DTB': '#0284C7',
+      'Family Bank': '#DC2626',
+      'Standard Chartered': '#0284C7',
+      'Cash': '#10B981',
+    };
+    return colors[bankName] || '#6B7280';
   };
 
   const handleNewManualSale = async (saleData) => {
@@ -126,8 +345,8 @@ const HomeScreen = ({ navigation, route }) => {
       amount: parseFloat(saleData.amount),
       sender: saleData.customerName || 'Cash Sale',
       phone: saleData.customerPhone || null,
-      timestamp: new Date(),
-      type: 'cash',
+      timestamp: new Date().toISOString(),
+      type: 'received',
       transactionType: 'received',
       message: saleData.description || 'Manual cash sale entry',
       bank: 'Cash',
@@ -135,234 +354,221 @@ const HomeScreen = ({ navigation, route }) => {
       category: saleData.category || 'general',
     };
 
+    console.log('💵 Adding manual sale:', newTransaction);
+
     const updatedTransactions = [newTransaction, ...transactions];
     setTransactions(updatedTransactions);
     await TransactionStorage.saveTransactions(updatedTransactions);
     filterBusinessTransactions(updatedTransactions);
-  };
-
-  const calculateMetrics = () => {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    let todayTotal = 0;
-    let weekTotal = 0;
-    let monthTotal = 0;
-    const banks = {};
-
-    businessTransactions.forEach(transaction => {
-      const transactionDate = new Date(transaction.timestamp);
-      const amount = Math.abs(transaction.amount);
-
-      if (transactionDate >= todayStart) {
-        todayTotal += amount;
-      }
-      if (transactionDate >= weekStart) {
-        weekTotal += amount;
-      }
-      if (transactionDate >= monthStart) {
-        monthTotal += amount;
-      }
-
-      // Bank statistics
-      const bankName = transaction.bank || 'Unknown';
-      if (!banks[bankName]) {
-        banks[bankName] = { count: 0, total: 0 };
-      }
-      banks[bankName].count++;
-      banks[bankName].total += amount;
-    });
-
-    setTodayRevenue(todayTotal);
-    setWeekRevenue(weekTotal);
-    setMonthRevenue(monthTotal);
-    setBankStats(banks);
+    calculateMetrics(updatedTransactions);
+    setActiveBanks(buildActiveBanks(updatedTransactions));
   };
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadStoredTransactions();
-    if (permissionStatus === 'granted') {
-      await handleScanSMS();
-    }
     setRefreshing(false);
-  }, [permissionStatus]);
+  }, []);
 
-  const getPermissionStatusColor = () => {
-    switch (permissionStatus) {
-      case 'granted':
-        return COLORS.success;
-      case 'denied':
-        return COLORS.error;
-      default:
-        return COLORS.warning;
-    }
+  const getBusinessPercentage = () => {
+    if (transactionCount === 0) return 0;
+    return Math.round((businessTransactionCount / transactionCount) * 100);
+  };
+
+  const getAverageTransaction = () => {
+    if (businessTransactionCount === 0) return 0;
+    return Math.round(todayRevenue / businessTransactionCount);
+  };
+
+  const getGrowthPercentage = () => {
+    if (yesterdayRevenue === 0) return todayRevenue > 0 ? 100 : 0;
+    return ((todayRevenue - yesterdayRevenue) / yesterdayRevenue * 100);
+  };
+
+  const isGrowthPositive = () => {
+    return todayRevenue >= yesterdayRevenue;
   };
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
-      
-      {/* Use EnhancedHeader instead of custom header */}
-      <EnhancedHeader
-        title="Business Dashboard"
-        subtitle="Track your sales and income"
-        rightComponent={
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primaryStart} />
+
+      {/* Gradient Header */}
+      <View style={styles.gradientHeader}>
+        <View style={styles.headerTop}>
+          <View>
+            <Text style={styles.headerTitle}>TRACK BIZ</Text>
+            <Text style={styles.headerDate}>{todayDate}</Text>
+          </View>
           <TouchableOpacity
-            style={styles.searchButton}
-            onPress={() => navigation.navigate('AllTransactions')}
+            style={styles.menuButton}
+            onPress={() => navigation.navigate('Settings')}
           >
-            <Search size={24} color={COLORS.text} />
+            <Menu size={22} color={Colors.surface} />
           </TouchableOpacity>
-        }
-      />
+        </View>
+      </View>
+
+      {/* Floating Revenue Card */}
+      <TouchableOpacity
+        style={styles.revenueCard}
+        activeOpacity={0.95}
+        onPress={() => navigation.navigate('Analytics')}
+      >
+        <Text style={styles.revenueLabel}>Today's Business Revenue</Text>
+
+        <View style={styles.revenueAmountContainer}>
+          {isRevenueVisible ? (
+            <Text style={styles.revenueAmount}>
+              Ksh {todayRevenue.toLocaleString()}
+            </Text>
+          ) : (
+            <Text style={styles.revenueAmount}>Ksh ••••••</Text>
+          )}
+        </View>
+
+        <View style={styles.revenueFooter}>
+          <View style={styles.growthContainer}>
+            {isGrowthPositive() ? (
+              <TrendingUp size={14} color={Colors.success} />
+            ) : (
+              <TrendingDown size={14} color={Colors.error} />
+            )}
+            <Text style={[
+              styles.growthText,
+              { color: isGrowthPositive() ? Colors.success : Colors.error }
+            ]}>
+              {isGrowthPositive() ? '+' : ''}
+              {getGrowthPercentage().toFixed(1)}% from yesterday
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.eyeButton}
+            onPress={() => setIsRevenueVisible(!isRevenueVisible)}
+          >
+            {isRevenueVisible ? (
+              <Eye size={16} color={Colors.textSecondary} />
+            ) : (
+              <EyeOff size={16} color={Colors.textSecondary} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
 
       <ScrollView
         style={styles.scrollView}
+        contentContainerStyle={{ paddingTop: Spacing.sm }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={[COLORS.primary]}
-            tintColor={COLORS.primary}
+            colors={[Colors.primary]}
+            tintColor={Colors.primary}
           />
         }
       >
-        {/* Today's Revenue Card */}
-        <Card style={styles.revenueCard}>
-          <View style={styles.revenueHeader}>
-            <View>
-              <Text style={styles.revenueLabel}>Today's Revenue</Text>
-              <Text style={styles.revenueAmount}>
-                Ksh {todayRevenue.toLocaleString('en-KE', {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
-              </Text>
-            </View>
-            <View style={styles.revenueIcon}>
-              <DollarSign size={32} color={COLORS.success} />
-            </View>
-          </View>
-          <View style={styles.revenueFooter}>
-            <View style={styles.revenueMetric}>
-              <Text style={styles.revenueMetricLabel}>This Week</Text>
-              <Text style={styles.revenueMetricValue}>
-                Ksh {weekRevenue.toLocaleString('en-KE')}
-              </Text>
-            </View>
-            <View style={styles.revenueDivider} />
-            <View style={styles.revenueMetric}>
-              <Text style={styles.revenueMetricLabel}>This Month</Text>
-              <Text style={styles.revenueMetricValue}>
-                Ksh {monthRevenue.toLocaleString('en-KE')}
-              </Text>
-            </View>
-          </View>
-        </Card>
-
-        {/* Quick Stats */}
+        {/* Metrics Grid - 4 Cards */}
         <View style={styles.metricsGrid}>
-          <MetricCard
-            title="Total Sales"
-            value={businessTransactions.length.toString()}
-            icon={<TrendingUp size={20} color={COLORS.primary} />}
-            trend="+12.5%"
-            trendUp={true}
-          />
-          <MetricCard
-            title="Avg. Sale"
-            value={`Ksh ${businessTransactions.length > 0 
-              ? (businessTransactions.reduce((sum, t) => sum + t.amount, 0) / businessTransactions.length).toFixed(0)
-              : '0'}`}
-            icon={<DollarSign size={20} color={COLORS.success} />}
-          />
+          <View style={styles.metricCard}>
+            <View style={[styles.metricIconContainer, { backgroundColor: '#DBEAFE' }]}>
+              <BarChart3 size={20} color="#2563EB" />
+            </View>
+            <Text style={styles.metricLabel}>Business Transactions</Text>
+            <Text style={styles.metricValue}>{businessTransactionCount}</Text>
+          </View>
+
+          <View style={styles.metricCard}>
+            <View style={[styles.metricIconContainer, { backgroundColor: '#E0E7FF' }]}>
+              <Activity size={20} color="#6366F1" />
+            </View>
+            <Text style={styles.metricLabel}>Total Transactions</Text>
+            <Text style={styles.metricValue}>{transactionCount}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.metricCard}
+            onPress={() => navigation.navigate('Analytics')}
+          >
+            <View style={[styles.metricIconContainer, { backgroundColor: '#FEE2E2' }]}>
+              <TrendingUp size={20} color="#EF4444" />
+            </View>
+            <View style={styles.metricHeaderRow}>
+              <Text style={styles.metricLabel}>Business Rate</Text>
+              <Text style={styles.viewLink}>View</Text>
+            </View>
+            <Text style={styles.metricValue}>{getBusinessPercentage()}%</Text>
+          </TouchableOpacity>
+
+          <View style={styles.metricCard}>
+            <View style={[styles.metricIconContainer, { backgroundColor: '#DBEAFE' }]}>
+              <DollarSign size={20} color="#0284C7" />
+            </View>
+            <Text style={styles.metricLabel}>Average Transaction</Text>
+            <Text style={styles.metricValue}>Ksh {getAverageTransaction().toLocaleString()}</Text>
+          </View>
         </View>
 
-        {/* SMS Auto-Tracking Section (REPLACED WITH SCAN BUTTON) */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📱 SMS Transaction Scanner</Text>
-          
-          <Card style={styles.smsCard}>
-            {/* Permission Status */}
-            <View style={[styles.permissionBadge, { backgroundColor: getPermissionStatusColor() }]}>
-              <View style={styles.permissionDot} />
-              <Text style={styles.permissionText}>
-                SMS Access: {permissionStatus === 'granted' ? 'Enabled' : 'Disabled'}
+        {/* Auto Tracking + Cash Sales Cards */}
+        <View style={styles.actionCardsRow}>
+          {/* Auto Tracking Card (SMS Scanner) */}
+          <View style={styles.trackingCard}>
+            <View style={styles.trackingHeader}>
+              <Text style={styles.trackingTitle}>SMS Tracking</Text>
+              <Switch
+                value={isScanning}
+                onValueChange={handleAutoTrackingToggle}
+                trackColor={{ false: '#E5E7EB', true: Colors.success + '60' }}
+                thumbColor={isScanning ? Colors.success : '#F3F4F6'}
+                disabled={isScanning}
+              />
+            </View>
+            <Text style={styles.trackingSubtitle}>
+              {permissionStatus === 'granted'
+                ? (isScanning ? 'Scanning SMS...' : 'Ready to scan')
+                : 'Permission needed'}
+            </Text>
+            <View style={styles.trackingStatus}>
+              <View style={[styles.statusDot, {
+                backgroundColor: permissionStatus === 'granted' ? Colors.success : '#9CA3AF'
+              }]} />
+              <Text style={styles.statusText}>
+                {isScanning
+                  ? 'Scanning...'
+                  : `${transactions.filter(t => t.source === 'sms_scan').length} SMS found`}
               </Text>
             </View>
+          </View>
 
-            {/* Scan Button */}
-            <TouchableOpacity
-              style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
-              onPress={handleScanSMS}
-              disabled={isScanning}
-              activeOpacity={0.8}
-            >
-              <View style={styles.scanButtonContent}>
-                <Text style={styles.scanButtonIcon}>{isScanning ? '⏳' : '🔍'}</Text>
-                <View>
-                  <Text style={styles.scanButtonText}>
-                    {isScanning ? 'Scanning SMS...' : 'Scan for Transactions'}
-                  </Text>
-                  <Text style={styles.scanButtonSubtext}>
-                    Auto-detect M-Pesa & Bank SMS
-                  </Text>
-                </View>
+          {/* Cash Sales Card */}
+          <TouchableOpacity
+            style={styles.cashSalesCard}
+            onPress={() => setShowAddSaleDialog(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.cashSalesTitle}>Cash Sales</Text>
+            <Text style={styles.cashSalesSubtitle}>Record manually</Text>
+            <View style={styles.cashSalesAction}>
+              <View style={styles.cashSalesIconRow}>
+                <Wallet size={18} color={Colors.success} />
+                <Text style={styles.cashSalesActionText}>Add Sale</Text>
               </View>
-            </TouchableOpacity>
-
-            {/* Stats Row */}
-            <View style={styles.smsStatsRow}>
-              <View style={styles.smsStatItem}>
-                <Text style={styles.smsStatValue}>{transactions.length}</Text>
-                <Text style={styles.smsStatLabel}>Total Found</Text>
-              </View>
-              <View style={styles.smsStatDivider} />
-              <View style={styles.smsStatItem}>
-                <Text style={styles.smsStatValue}>
-                  {transactions.filter(t => t.source === 'sms_scan').length}
-                </Text>
-                <Text style={styles.smsStatLabel}>From SMS</Text>
-              </View>
-              <View style={styles.smsStatDivider} />
-              <View style={styles.smsStatItem}>
-                <Text style={styles.smsStatValue}>
-                  {transactions.filter(t => t.source === 'manual').length}
-                </Text>
-                <Text style={styles.smsStatLabel}>Manual</Text>
-              </View>
+              <Plus size={20} color={Colors.success} />
             </View>
-
-            {/* Retry Permission Button */}
-            {permissionStatus === 'denied' && (
-              <TouchableOpacity
-                style={styles.retryPermissionButton}
-                onPress={requestSMSPermission}
-              >
-                <Text style={styles.retryPermissionText}>🔄 Grant SMS Permission</Text>
-              </TouchableOpacity>
-            )}
-          </Card>
+          </TouchableOpacity>
         </View>
 
-        {/* Bank Detection */}
-        {Object.keys(bankStats).length > 0 && (
+        {/* Detected Services */}
+        {activeBanks.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Bank Sources</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {Object.entries(bankStats).map(([bankName, stats]) => (
-                <BankCard
-                  key={bankName}
-                  bankName={bankName}
-                  transactionCount={stats.count}
-                  totalAmount={stats.total}
-                />
+            <Text style={styles.sectionTitle}>Detected Services</Text>
+            <Text style={styles.sectionSubtitle}>Auto-detected from SMS messages</Text>
+            <View style={styles.banksList}>
+              {activeBanks.map(bank => (
+                <BankCard key={bank.name} {...bank} />
               ))}
-            </ScrollView>
+            </View>
           </View>
         )}
 
@@ -370,39 +576,80 @@ const HomeScreen = ({ navigation, route }) => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recent Transactions</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('AllTransactions')}>
-              <Text style={styles.seeAllText}>See All</Text>
-            </TouchableOpacity>
           </View>
 
-          {businessTransactions.length > 0 ? (
-            businessTransactions.slice(0, 5).map((transaction) => (
-              <TransactionItem
-                key={transaction.id}
-                transaction={transaction}
-                onPress={() => {
-                  navigation.navigate('TransactionDetails', { transaction });
-                }}
-              />
-            ))
-          ) : (
-            <Card style={styles.emptyCard}>
-              <Text style={styles.emptyIcon}>📭</Text>
-              <Text style={styles.emptyTitle}>No Transactions Yet</Text>
-              <Text style={styles.emptyText}>
-                {permissionStatus === 'granted'
-                  ? 'Tap the scan button above to find transactions in your SMS'
-                  : 'Grant SMS permission or add manual cash sales to get started'}
+          {businessTransactions.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>No transactions yet</Text>
+              <Text style={styles.emptyStateSubtext}>
+                Turn on Auto Tracking or add manual sales to get started
               </Text>
-            </Card>
+            </View>
+          ) : (
+            <View style={styles.transactionsList}>
+              {businessTransactions.slice(0, 10).map((transaction, index) => (
+                <TouchableOpacity
+                  key={transaction.id || index}
+                  style={styles.transactionItem}
+                  onPress={() => navigation.navigate('TransactionDetails', { transaction })}
+                >
+                  <View style={styles.transactionIcon}>
+                    {transaction.amount > 0 ? (
+                      <ArrowDownLeft size={16} color={Colors.success} />
+                    ) : (
+                      <ArrowUpRight size={16} color={Colors.error} />
+                    )}
+                  </View>
+
+                  <View style={styles.transactionDetails}>
+                    <Text style={styles.transactionSender} numberOfLines={1}>
+                      {transaction.sender || 'Unknown'}
+                    </Text>
+                    <View style={styles.transactionMeta}>
+                      <Text style={styles.transactionBank}>{transaction.bank}</Text>
+                      {transaction.source === 'manual' && (
+                        <>
+                          <Text style={styles.transactionDot}>•</Text>
+                          <View style={styles.businessBadge}>
+                            <Text style={styles.businessBadgeText}>Manual</Text>
+                          </View>
+                        </>
+                      )}
+                    </View>
+                    <Text style={styles.transactionTime}>
+                      {new Date(transaction.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </Text>
+                  </View>
+
+                  <Text style={[
+                    styles.transactionAmount,
+                    { color: transaction.amount > 0 ? Colors.success : Colors.error }
+                  ]}>
+                    {transaction.amount > 0 ? '+' : ''} Ksh {Math.abs(transaction.amount).toLocaleString()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+
+              <TouchableOpacity
+                style={styles.viewAllButton}
+                onPress={() => navigation.navigate('AllTransactions')}
+              >
+                <Text style={styles.viewAllText}>View All Transactions</Text>
+                <Text style={styles.viewAllArrow}>›</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
 
-        <View style={{ height: 100 }} />
-      </ScrollView>
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>Powered by Track Biz • Secure & Encrypted</Text>
+        </View>
 
-      {/* Floating Add Button */}
-      <AddCashSaleButton onPress={() => setShowAddSaleDialog(true)} />
+        <View style={{ height: 40 }} />
+      </ScrollView>
 
       {/* Add Cash Sale Dialog */}
       <AddCashSaleDialog
@@ -414,212 +661,355 @@ const HomeScreen = ({ navigation, route }) => {
   );
 };
 
-// Remove custom header styles since we're using EnhancedHeader
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: Colors.background,
+  },
+  gradientHeader: {
+    backgroundColor: Colors.primaryStart,
+    paddingTop: Spacing.xl + 20,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: 50,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.sm,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: Colors.surface,
+    marginBottom: 4,
+    letterSpacing: 2,
+    fontStyle: 'italic',
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(255, 255, 255, 0.3)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  headerDate: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontStyle: 'italic',
+  },
+  menuButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    padding: 8,
+    borderRadius: 8,
+  },
+  revenueCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    marginHorizontal: Spacing.lg,
+    marginTop: -35,
+    ...Shadows.lg,
+    elevation: 8,
+  },
+  revenueLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  revenueAmountContainer: {
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  revenueAmount: {
+    fontSize: 36,
+    fontWeight: '800',
+    color: Colors.text,
+    letterSpacing: -1,
+  },
+  revenueFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  growthContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  growthText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  eyeButton: {
+    padding: 4,
+    borderRadius: 4,
+    backgroundColor: Colors.background,
   },
   scrollView: {
     flex: 1,
   },
-  searchButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.white,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...SHADOWS.small,
-  },
-  revenueCard: {
-    marginHorizontal: SPACING.md,
-    marginBottom: SPACING.md,
-    padding: SPACING.lg,
-    backgroundColor: COLORS.primary,
-  },
-  revenueHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: SPACING.lg,
-  },
-  revenueLabel: {
-    ...TYPOGRAPHY.body,
-    color: COLORS.white,
-    opacity: 0.9,
-    marginBottom: SPACING.xs,
-  },
-  revenueAmount: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: COLORS.white,
-  },
-  revenueIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  revenueFooter: {
-    flexDirection: 'row',
-    paddingTop: SPACING.md,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  revenueMetric: {
-    flex: 1,
-  },
-  revenueMetricLabel: {
-    ...TYPOGRAPHY.caption,
-    color: COLORS.white,
-    opacity: 0.8,
-    marginBottom: 4,
-  },
-  revenueMetricValue: {
-    ...TYPOGRAPHY.h4,
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  revenueDivider: {
-    width: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    marginHorizontal: SPACING.md,
-  },
   metricsGrid: {
     flexDirection: 'row',
-    paddingHorizontal: SPACING.md,
-    gap: SPACING.sm,
-    marginBottom: SPACING.md,
+    flexWrap: 'wrap',
+    padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  metricCard: {
+    width: (width - Spacing.md * 3) / 2,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Shadows.sm,
+  },
+  metricIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  metricHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  metricLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  metricValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: Colors.text,
+  },
+  viewLink: {
+    fontSize: 11,
+    color: Colors.primary,
+    fontWeight: '500',
+  },
+  actionCardsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.md,
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  trackingCard: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  trackingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  trackingTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  trackingSubtitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 12,
+  },
+  trackingStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.cardMint,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  statusText: {
+    fontSize: 11,
+    color: Colors.text,
+    fontWeight: '500',
+  },
+  cashSalesCard: {
+    flex: 1,
+    backgroundColor: Colors.cardLight,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+  },
+  cashSalesTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  cashSalesSubtitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 12,
+  },
+  cashSalesAction: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cashSalesIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cashSalesActionText: {
+    fontSize: 13,
+    color: Colors.success,
+    fontWeight: '500',
   },
   section: {
-    paddingHorizontal: SPACING.md,
-    marginBottom: SPACING.lg,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.lg,
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: SPACING.md,
+    marginBottom: Spacing.sm,
   },
   sectionTitle: {
-    ...TYPOGRAPHY.h3,
-    color: COLORS.text,
-  },
-  seeAllText: {
-    ...TYPOGRAPHY.body,
-    color: COLORS.primary,
+    fontSize: 16,
     fontWeight: '600',
+    color: Colors.text,
   },
-  smsCard: {
-    padding: SPACING.lg,
+  sectionSubtitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
   },
-  permissionBadge: {
+  banksList: {
+    gap: Spacing.sm,
+  },
+  transactionsList: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  transactionItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: 8,
-    marginBottom: SPACING.md,
-    gap: SPACING.sm,
+    padding: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderLight,
   },
-  permissionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.white,
-  },
-  permissionText: {
-    ...TYPOGRAPHY.caption,
-    color: COLORS.white,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  scanButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 12,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-    ...SHADOWS.medium,
-  },
-  scanButtonDisabled: {
-    opacity: 0.6,
-  },
-  scanButtonContent: {
-    flexDirection: 'row',
+  transactionIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.background,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: SPACING.md,
+    marginRight: Spacing.sm,
   },
-  scanButtonIcon: {
-    fontSize: 32,
+  transactionDetails: {
+    flex: 1,
+    marginRight: Spacing.sm,
   },
-  scanButtonText: {
-    ...TYPOGRAPHY.h4,
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  scanButtonSubtext: {
-    ...TYPOGRAPHY.caption,
-    color: COLORS.white,
-    opacity: 0.9,
-    marginTop: 2,
-  },
-  smsStatsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: SPACING.md,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  smsStatItem: {
-    alignItems: 'center',
-  },
-  smsStatValue: {
-    ...TYPOGRAPHY.h3,
-    color: COLORS.text,
-    fontWeight: '700',
-  },
-  smsStatLabel: {
-    ...TYPOGRAPHY.caption,
-    color: COLORS.textSecondary,
-    marginTop: 4,
-  },
-  smsStatDivider: {
-    width: 1,
-    backgroundColor: COLORS.border,
-  },
-  retryPermissionButton: {
-    backgroundColor: COLORS.warning,
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    borderRadius: 8,
-    marginTop: SPACING.md,
-    alignItems: 'center',
-  },
-  retryPermissionText: {
-    color: COLORS.white,
-    fontWeight: '600',
+  transactionSender: {
     fontSize: 14,
+    fontWeight: '500',
+    color: Colors.text,
+    marginBottom: 4,
   },
-  emptyCard: {
-    padding: SPACING.xl,
+  transactionMeta: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
   },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: SPACING.md,
+  transactionBank: {
+    fontSize: 11,
+    color: Colors.textSecondary,
   },
-  emptyTitle: {
-    ...TYPOGRAPHY.h4,
-    color: COLORS.text,
-    marginBottom: SPACING.sm,
+  transactionDot: {
+    fontSize: 11,
+    color: Colors.borderLight,
   },
-  emptyText: {
-    ...TYPOGRAPHY.body,
-    color: COLORS.textSecondary,
+  businessBadge: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  businessBadgeText: {
+    fontSize: 9,
+    color: '#4F46E5',
+    fontWeight: '600',
+  },
+  transactionTime: {
+    fontSize: 11,
+    color: Colors.textLight,
+  },
+  transactionAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  viewAllButton: {
+    padding: Spacing.md,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    backgroundColor: Colors.background,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderLight,
+  },
+  viewAllText: {
+    fontSize: 13,
+    color: Colors.primary,
+    fontWeight: '500',
+    marginRight: 4,
+  },
+  viewAllArrow: {
+    fontSize: 18,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  emptyState: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.xxl,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  emptyStateText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  emptyStateSubtext: {
+    fontSize: 12,
+    color: Colors.textSecondary,
     textAlign: 'center',
+  },
+  footer: {
+    alignItems: 'center',
+    paddingVertical: Spacing.lg,
+  },
+  footerText: {
+    fontSize: 11,
+    color: Colors.textSecondary,
   },
 });
 

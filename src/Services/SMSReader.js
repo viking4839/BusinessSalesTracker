@@ -7,6 +7,22 @@ class SMSReader {
         this.lastScanTime = null;
     }
 
+    // Generate deterministic ID from message content
+    generateTransactionId(messageData, bank, amount) {
+        // Create unique string from message properties
+        const uniqueString = `${messageData._id || ''}_${messageData.body}_${messageData.date}_${bank}_${amount}`;
+        
+        // Simple hash function (no crypto needed)
+        let hash = 0;
+        for (let i = 0; i < uniqueString.length; i++) {
+            const char = uniqueString.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        
+        return `tx_${Math.abs(hash)}_${bank.replace(/\s+/g, '_')}`;
+    }
+
     // Request SMS permission
     async requestPermission() {
         if (Platform.OS !== 'android') {
@@ -63,8 +79,8 @@ class SMSReader {
     async readRealSMS(limit = 200) {
         return new Promise((resolve, reject) => {
             const filter = {
-                box: 'inbox', // 'inbox' (default), 'sent', 'draft', 'outbox', 'failed', 'queued', and '' for all
-                maxCount: limit, // count of SMS to return
+                box: 'inbox',
+                maxCount: limit,
             };
 
             SmsAndroid.list(
@@ -84,7 +100,6 @@ class SMSReader {
 
     // Main function to scan for transactions
     async scanRecentTransactions(limit = 200) {
-        // Check permission first
         const hasPermission = await this.checkPermission();
 
         if (!hasPermission) {
@@ -97,11 +112,12 @@ class SMSReader {
         try {
             ToastAndroid.show('Scanning SMS for transactions...', ToastAndroid.SHORT);
 
-            // Read real SMS messages from device
             const messages = await this.readRealSMS(limit);
             const transactions = this.parseMessages(messages);
 
             this.lastScanTime = new Date();
+
+            console.log(`✅ Parsed ${transactions.length} transactions`);
 
             if (transactions.length > 0) {
                 ToastAndroid.show(`Found ${transactions.length} transactions!`, ToastAndroid.SHORT);
@@ -161,22 +177,18 @@ class SMSReader {
         }
 
         try {
-            // M-PESA Parser
             if (this.isMpesaMessage(message)) {
                 return this.parseMpesaMessage(message, messageData);
             }
 
-            // Equity Bank Parser
             if (this.isEquityMessage(message)) {
                 return this.parseEquityMessage(message, messageData);
             }
 
-            // Co-op Bank Parser
             if (this.isCoopMessage(message)) {
                 return this.parseCoopMessage(message, messageData);
             }
 
-            // Generic bank parser as fallback
             return this.parseGenericBankMessage(message, messageData);
         } catch (error) {
             console.error('Error parsing transaction:', error, message);
@@ -222,8 +234,11 @@ class SMSReader {
             type = 'sent';
         }
 
+        const bank = 'M-Pesa';
+        const id = this.generateTransactionId(messageData, bank, amount); // ✅ Deterministic ID
+
         return {
-            id: `mpesa_${messageData._id || messageData.date}_${Math.random()}`,
+            id, // ✅ Same SMS = Same ID every time
             amount: type === 'received' ? amount : -amount,
             sender,
             phone,
@@ -231,7 +246,7 @@ class SMSReader {
             type: 'mpesa',
             transactionType: type,
             message: message,
-            bank: 'M-Pesa',
+            bank,
             source: 'sms_scan',
         };
     }
@@ -257,15 +272,18 @@ class SMSReader {
         const senderMatch = message.match(/from\s+(.+?)\s+on/i) ||
             message.match(/from\s+(.+?)\./i);
 
+        const bank = 'Equity Bank';
+        const id = this.generateTransactionId(messageData, bank, amount); // ✅ Deterministic ID
+
         return {
-            id: `equity_${messageData._id || messageData.date}_${Math.random()}`,
+            id,
             amount: type === 'received' ? amount : -amount,
             sender: senderMatch ? senderMatch[1].trim() : 'Equity Bank Customer',
             timestamp: new Date(parseInt(messageData.date)),
             type: 'equity',
             transactionType: type,
             message: message,
-            bank: 'Equity Bank',
+            bank,
             source: 'sms_scan',
         };
     }
@@ -287,15 +305,18 @@ class SMSReader {
             type = 'sent';
         }
 
+        const bank = 'Co-operative Bank';
+        const id = this.generateTransactionId(messageData, bank, amount); // ✅ Deterministic ID
+
         return {
-            id: `coop_${messageData._id || messageData.date}_${Math.random()}`,
+            id,
             amount: type === 'received' ? amount : -amount,
             sender: senderMatch ? senderMatch[1].trim() : 'Co-op Customer',
             timestamp: new Date(parseInt(messageData.date)),
             type: 'coop',
             transactionType: type,
             message: message,
-            bank: 'Co-operative Bank',
+            bank,
             source: 'sms_scan',
         };
     }
@@ -308,7 +329,6 @@ class SMSReader {
 
         const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
 
-        // Try to detect bank
         let bank = 'Unknown Bank';
         if (message.includes('KCB')) bank = 'KCB';
         else if (message.includes('DTB')) bank = 'DTB';
@@ -323,8 +343,10 @@ class SMSReader {
             type = 'sent';
         }
 
+        const id = this.generateTransactionId(messageData, bank, amount); // ✅ Deterministic ID
+
         return {
-            id: `bank_${messageData._id || messageData.date}_${Math.random()}`,
+            id,
             amount: type === 'received' ? amount : -amount,
             sender: 'Bank Customer',
             timestamp: new Date(parseInt(messageData.date)),

@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Dimensions, TouchableOpacity } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { View, Text, StyleSheet, ScrollView, Dimensions, TouchableOpacity, RefreshControl } from 'react-native';
+import TransactionStorage from '../utils/TransactionStorage';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
-import { TrendingUp, TrendingDown, DollarSign, Activity, Calendar } from 'lucide-react-native';
+import { ArrowLeft, TrendingUp, TrendingDown, DollarSign, Activity, Calendar } from 'lucide-react-native';
 import BarChart from '../components/BarChart';
+import { useFocusEffect } from '@react-navigation/native';
 
 const { width } = Dimensions.get('window');
 
-const AnalyticsScreen = () => {
+const AnalyticsScreen = ({ navigation }) => { // change signature to receive navigation
   const [stats, setStats] = useState({
     totalRevenue: 0,
     businessRevenue: 0,
@@ -22,11 +23,19 @@ const AnalyticsScreen = () => {
   const [chartPeriod, setChartPeriod] = useState('week');
   const [chartData, setChartData] = useState([]);
   const [maxChartValue, setMaxChartValue] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Load analytics on mount
   useEffect(() => {
     loadAnalytics();
   }, []);
+
+  // Refresh when screen focuses
+  useFocusEffect(
+    React.useCallback(() => {
+      loadAnalytics();
+    }, [])
+  );
 
   // Regenerate chart when period changes
   useEffect(() => {
@@ -37,26 +46,28 @@ const AnalyticsScreen = () => {
 
   const loadAnalytics = async () => {
     try {
-      const data = await AsyncStorage.getItem('transactions');
-      const transactions = data ? JSON.parse(data) : [];
+      console.log('📊 Loading analytics data...');
+
+      // Load transactions from TransactionStorage (same as HomeScreen)
+      const transactions = await TransactionStorage.loadTransactions();
+      console.log(`✅ Loaded ${transactions.length} transactions for analytics`);
 
       if (transactions.length === 0) {
         generateChartData([]);
         return;
       }
 
-      // Calculate total revenue
+      // Calculate total revenue (all incoming transactions)
       const totalRevenue = transactions
         .filter(t => Number(t.amount) > 0)
         .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
 
-      // Calculate business revenue
-      const businessRevenue = transactions
-        .filter(t => t.isBusinessTransaction && Number(t.amount) > 0)
-        .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+      // Calculate business revenue (only business transactions with positive amounts)
+      const businessTransactions = transactions.filter(t => Number(t.amount) > 0);
+      const businessRevenue = businessTransactions.reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
 
       const transactionCount = transactions.length;
-      const businessCount = transactions.filter(t => t.isBusinessTransaction).length;
+      const businessCount = businessTransactions.length;
 
       // Average transaction
       const averageTransaction = businessCount > 0 ? businessRevenue / businessCount : 0;
@@ -67,41 +78,42 @@ const AnalyticsScreen = () => {
         const bank = t.bank || 'Unknown';
         bankCounts[bank] = (bankCounts[bank] || 0) + 1;
       });
-      const topBank = Object.keys(bankCounts).reduce((a, b) =>
-        bankCounts[a] > bankCounts[b] ? a : b, 'N/A'
-      );
+      const topBank = Object.keys(bankCounts).length > 0
+        ? Object.keys(bankCounts).reduce((a, b) => bankCounts[a] > bankCounts[b] ? a : b)
+        : 'N/A';
 
       // Top day
       const dayCounts = {};
       transactions.forEach(t => {
-        const date = new Date(t.timestamp || t.date);
+        const date = new Date(t.timestamp);
         const day = date.toLocaleDateString('en-US', { weekday: 'long' });
         dayCounts[day] = (dayCounts[day] || 0) + 1;
       });
-      const topDay = Object.keys(dayCounts).reduce((a, b) =>
-        dayCounts[a] > dayCounts[b] ? a : b, 'N/A'
-      );
+      const topDay = Object.keys(dayCounts).length > 0
+        ? Object.keys(dayCounts).reduce((a, b) => dayCounts[a] > dayCounts[b] ? a : b)
+        : 'N/A';
 
       // Calculate growth rate (last 7 days vs previous 7 days)
       const now = new Date();
+
       const last7Days = transactions.filter(t => {
-        const date = new Date(t.timestamp || t.date);
-        const diffTime = Math.abs(now - date);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays <= 7 && t.isBusinessTransaction && Number(t.amount) > 0;
+        const date = new Date(t.timestamp);
+        const diffTime = now - date;
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        return diffDays >= 0 && diffDays <= 7 && Number(t.amount) > 0;
       });
 
       const previous7Days = transactions.filter(t => {
-        const date = new Date(t.timestamp || t.date);
-        const diffTime = Math.abs(now - date);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        return diffDays > 7 && diffDays <= 14 && t.isBusinessTransaction && Number(t.amount) > 0;
+        const date = new Date(t.timestamp);
+        const diffTime = now - date;
+        const diffDays = diffTime / (1000 * 60 * 60 * 24);
+        return diffDays > 7 && diffDays <= 14 && Number(t.amount) > 0;
       });
 
       const last7Total = last7Days.reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
       const prev7Total = previous7Days.reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
 
-      const growthRate = prev7Total > 0 ? ((last7Total - prev7Total) / prev7Total) * 100 : 0;
+      const growthRate = prev7Total > 0 ? ((last7Total - prev7Total) / prev7Total) * 100 : (last7Total > 0 ? 100 : 0);
 
       setStats({
         totalRevenue,
@@ -114,10 +126,12 @@ const AnalyticsScreen = () => {
         growthRate,
       });
 
+      console.log(`📈 Analytics calculated: Revenue=${businessRevenue}, Growth=${growthRate.toFixed(1)}%`);
+
       // Generate chart data
       generateChartData(transactions);
     } catch (error) {
-      console.error('Error loading analytics:', error);
+      console.error('❌ Error loading analytics:', error);
     }
   };
 
@@ -129,22 +143,18 @@ const AnalyticsScreen = () => {
       // Last 24 hours by hour
       for (let i = 23; i >= 0; i--) {
         const hour = new Date(now);
-        hour.setHours(hour.getHours() - i);
-        const hourLabel = hour.getHours();
+        hour.setHours(hour.getHours() - i, 0, 0, 0);
+        const nextHour = new Date(hour);
+        nextHour.setHours(hour.getHours() + 1);
 
         const revenue = transactions
           .filter(t => {
-            const tDate = new Date(t.timestamp || t.date);
-            return (
-              tDate.getDate() === hour.getDate() &&
-              tDate.getMonth() === hour.getMonth() &&
-              tDate.getHours() === hour.getHours() &&
-              t.isBusinessTransaction &&
-              Number(t.amount) > 0
-            );
+            const tDate = new Date(t.timestamp);
+            return tDate >= hour && tDate < nextHour && Number(t.amount) > 0;
           })
           .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
 
+        const hourLabel = hour.getHours();
         chartData.push({
           label: hourLabel === 0 ? '12a' : hourLabel < 12 ? `${hourLabel}a` : hourLabel === 12 ? '12p' : `${hourLabel - 12}p`,
           value: revenue,
@@ -155,19 +165,18 @@ const AnalyticsScreen = () => {
       for (let i = 6; i >= 0; i--) {
         const day = new Date(now);
         day.setDate(day.getDate() - i);
-        const dayLabel = day.toLocaleDateString('en-US', { weekday: 'short' });
+        day.setHours(0, 0, 0, 0);
+        const nextDay = new Date(day);
+        nextDay.setDate(day.getDate() + 1);
 
         const revenue = transactions
           .filter(t => {
-            const tDate = new Date(t.timestamp || t.date);
-            return (
-              tDate.toDateString() === day.toDateString() &&
-              t.isBusinessTransaction &&
-              Number(t.amount) > 0
-            );
+            const tDate = new Date(t.timestamp);
+            return tDate >= day && tDate < nextDay && Number(t.amount) > 0;
           })
           .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
 
+        const dayLabel = day.toLocaleDateString('en-US', { weekday: 'short' });
         chartData.push({ label: dayLabel, value: revenue });
       }
     } else if (chartPeriod === 'month') {
@@ -175,18 +184,15 @@ const AnalyticsScreen = () => {
       for (let i = 3; i >= 0; i--) {
         const weekStart = new Date(now);
         weekStart.setDate(weekStart.getDate() - (i * 7 + 6));
+        weekStart.setHours(0, 0, 0, 0);
         const weekEnd = new Date(now);
         weekEnd.setDate(weekEnd.getDate() - (i * 7));
+        weekEnd.setHours(23, 59, 59, 999);
 
         const revenue = transactions
           .filter(t => {
-            const tDate = new Date(t.timestamp || t.date);
-            return (
-              tDate >= weekStart &&
-              tDate <= weekEnd &&
-              t.isBusinessTransaction &&
-              Number(t.amount) > 0
-            );
+            const tDate = new Date(t.timestamp);
+            return tDate >= weekStart && tDate <= weekEnd && Number(t.amount) > 0;
           })
           .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
 
@@ -194,9 +200,15 @@ const AnalyticsScreen = () => {
       }
     }
 
-    const maxValue = Math.max(...chartData.map(d => d.value), 1000);
+    const maxValue = Math.max(...chartData.map(d => d.value), 100);
     setChartData(chartData);
     setMaxChartValue(maxValue);
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadAnalytics();
+    setRefreshing(false);
   };
 
   const StatCard = ({ icon: Icon, label, value, color, subtitle }) => (
@@ -215,11 +227,18 @@ const AnalyticsScreen = () => {
     : 0;
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Business Analytics</Text>
-        <Text style={styles.subtitle}>Comprehensive business insights</Text>
+    <ScrollView style={styles.container}>
+      <View style={styles.headerRow}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <ArrowLeft size={22} color={Colors.text} />
+        </TouchableOpacity>
+        <Text style={styles.screenTitle}>Business Analytics</Text>
       </View>
+
+    
 
       {/* Growth Card */}
       <View style={styles.growthCard}>
@@ -244,7 +263,7 @@ const AnalyticsScreen = () => {
         <View style={styles.chartHeader}>
           <View>
             <Text style={styles.chartTitle}>Revenue Trend</Text>
-            <Text style={styles.chartSubtitle}>Business transactions only</Text>
+            <Text style={styles.chartSubtitle}>Business income only</Text>
           </View>
         </View>
 
@@ -277,7 +296,14 @@ const AnalyticsScreen = () => {
         </View>
 
         {/* Bar Chart */}
-        <BarChart data={chartData} maxValue={maxChartValue} period={chartPeriod} />
+        {chartData.length > 0 ? (
+          <BarChart data={chartData} maxValue={maxChartValue} period={chartPeriod} />
+        ) : (
+          <View style={styles.emptyChart}>
+            <Text style={styles.emptyChartText}>No data available</Text>
+            <Text style={styles.emptyChartSubtext}>Scan SMS or add transactions to see charts</Text>
+          </View>
+        )}
       </View>
 
       {/* Revenue Stats */}
@@ -286,21 +312,21 @@ const AnalyticsScreen = () => {
         <StatCard
           icon={DollarSign}
           label="Total Revenue"
-          value={`KSh ${stats.totalRevenue.toLocaleString()}`}
+          value={`Ksh ${stats.totalRevenue.toLocaleString()}`}
           color={Colors.primary}
           subtitle="All incoming transactions"
         />
         <StatCard
           icon={TrendingUp}
           label="Business Revenue"
-          value={`KSh ${stats.businessRevenue.toLocaleString()}`}
+          value={`Ksh ${stats.businessRevenue.toLocaleString()}`}
           color={Colors.success}
           subtitle={`${businessRate}% of total transactions`}
         />
         <StatCard
           icon={Activity}
           label="Average Transaction"
-          value={`KSh ${stats.averageTransaction.toLocaleString()}`}
+          value={`Ksh ${Math.round(stats.averageTransaction).toLocaleString()}`}
           color="#8b5cf6"
           subtitle="Per business transaction"
         />
@@ -328,7 +354,7 @@ const AnalyticsScreen = () => {
           label="Busiest Day"
           value={stats.topDay}
           color="#ec4899"
-          subtitle="Most transactions"
+          subtitle="Most transactions recorded"
         />
       </View>
 
@@ -394,6 +420,20 @@ const styles = StyleSheet.create({
   periodButtonTextActive: {
     color: Colors.surface,
   },
+  emptyChart: {
+    paddingVertical: Spacing.xxl,
+    alignItems: 'center',
+  },
+  emptyChartText: {
+    ...Typography.body,
+    color: Colors.text,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  emptyChartSubtext: {
+    ...Typography.caption,
+    color: Colors.textSecondary,
+  },
   section: { padding: Spacing.md },
   sectionTitle: { ...Typography.subheading, color: Colors.text, marginBottom: Spacing.sm },
   statCard: {
@@ -407,6 +447,29 @@ const styles = StyleSheet.create({
   statLabel: { ...Typography.caption, color: Colors.textSecondary, fontWeight: '600', textTransform: 'uppercase' },
   statValue: { ...Typography.title, color: Colors.text, fontSize: 24, fontWeight: '700', marginBottom: 4 },
   statSubtitle: { ...Typography.caption, color: Colors.textSecondary },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.lg,
+    marginBottom: Spacing.sm,
+  },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    marginRight: Spacing.md
+  },
+  screenTitle: {
+    ...Typography.subheading,
+    fontWeight: '700',
+    color: Colors.text
+  },
 });
 
 export default AnalyticsScreen;

@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import {
     ArrowDownLeft, ArrowUpRight, Calendar, Clock, Building2,
-    User, MessageSquare, Hash, TrendingUp, Tag
+    User, MessageSquare, Hash, TrendingUp, Tag, ArrowLeft
 } from 'lucide-react-native';
 import Button from '../components/Button';
 
@@ -51,6 +51,14 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
 
     return (
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+            {/* Header */}
+            <View style={styles.headerRow}>
+                <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+                    <ArrowLeft size={22} color={Colors.text} />
+                </TouchableOpacity>
+                <Text style={styles.screenTitle}>Transaction Details</Text>
+            </View>
+
             {/* Amount Card */}
             <View style={[styles.amountCard, { backgroundColor: isIncoming ? '#ecfdf5' : '#fef2f2' }]}>
                 <View style={styles.amountIcon}>
@@ -177,6 +185,15 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
+    headerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f8fafc',
+    },
+    backButton: { marginRight: 16 },
+    screenTitle: { ...Typography.subheading, color: Colors.text, fontWeight: '600' },
     amountCard: {
         margin: Spacing.md,
         padding: Spacing.xl,

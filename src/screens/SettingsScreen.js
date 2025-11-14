@@ -6,10 +6,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius } from '../styles/Theme';
 import Card from '../components/Card';
 import {
-  Bell, Bot, Volume2, Ban, Building2, Wallet, Clock, Target,
+  ArrowLeft, Bell, Bot, Volume2, Ban, Building2, Wallet, Clock, Target,
   Upload, Cloud, Trash2, Info, BookOpen, HelpCircle, Shield
 } from 'lucide-react-native';
 import PdfExportService from '../services/PdfExportService';
+import TransactionStorage from '../utils/TransactionStorage';
+import { DeviceEventEmitter } from 'react-native'; // <-- removed duplicate Alert import
 
 const SettingsScreen = ({ navigation }) => {
   const [notifications, setNotifications] = useState(true);
@@ -53,23 +55,23 @@ const SettingsScreen = ({ navigation }) => {
     } catch { }
   };
 
-  const handleClearData = () => {
+  const handleClearData = async () => {
     Alert.alert(
       'Clear All Data',
-      'This will delete all transactions and reset your statistics. This action cannot be undone.',
+      'Delete stored transactions and stats? This does not delete SMS on your phone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Clear Data',
+          text: 'Clear',
           style: 'destructive',
           onPress: async () => {
-            try {
-              await AsyncStorage.multiRemove([
-                'transactions', 'dailyTotals', 'salesTarget',
-                'businessProfile', 'businessHours'
-              ]);
-              Alert.alert('Success', 'All data has been cleared');
-            } catch (e) {
+            const ok = await TransactionStorage.clearTransactions?.();
+            if (ok) {
+              DeviceEventEmitter.emit('transactions:cleared');
+              const dbg = await TransactionStorage.debugDump?.();
+              console.log('After clear debug:', dbg);
+              Alert.alert('Done', 'Stored data cleared');
+            } else {
               Alert.alert('Error', 'Failed to clear data');
             }
           }
@@ -150,6 +152,15 @@ const SettingsScreen = ({ navigation }) => {
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      <View style={styles.headerRow}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <ArrowLeft size={22} color={Colors.text} />
+        </TouchableOpacity>
+        <Text style={styles.screenTitle}>Settings</Text>
+      </View>
       {/* Profile */}
       <Card variant="elevated">
         <View style={styles.profileSection}>
@@ -280,6 +291,29 @@ const styles = StyleSheet.create({
   settingTitle: { ...Typography.body, color: Colors.text, fontWeight: '500', marginBottom: 2 },
   settingSubtitle: { ...Typography.caption, color: Colors.textSecondary },
   settingArrow: { ...Typography.heading, fontSize: 24, color: Colors.textSecondary },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.lg,
+    marginBottom: Spacing.sm,
+  },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    marginRight: Spacing.md
+  },
+  screenTitle: {
+    ...Typography.subheading,
+    fontWeight: '700',
+    color: Colors.text
+  },
 });
 
 export default SettingsScreen;
