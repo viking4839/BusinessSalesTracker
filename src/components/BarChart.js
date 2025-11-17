@@ -1,170 +1,138 @@
 import React from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
-import { Colors, Typography, Spacing, BorderRadius } from '../styles/Theme';
+import { Colors, Typography, Spacing } from '../styles/Theme';
 
 const { width } = Dimensions.get('window');
-const CHART_WIDTH = width - (Spacing.lg * 2);
-const CHART_HEIGHT = 180;
-const BAR_WIDTH = 32;
+const CHART_WIDTH = width - 80; // More padding
+const CHART_HEIGHT = 180; // Reduced height
+const BAR_SPACING = 8;
 
 const BarChart = ({ data, maxValue, period }) => {
-    if (!data || data.length === 0) {
-        return (
-            <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No data available</Text>
-            </View>
-        );
-    }
+  const barWidth = (CHART_WIDTH / data.length) - BAR_SPACING;
+  const safeMaxValue = maxValue > 0 ? maxValue : 100;
 
-    const getBarHeight = (value) => {
-        if (maxValue === 0) return 0;
-        return (value / maxValue) * (CHART_HEIGHT - 40);
-    };
-
-    return (
-        <View style={styles.container}>
-            {/* Y-axis labels */}
-            <View style={styles.yAxis}>
-                <Text style={styles.yAxisLabel}>{maxValue.toLocaleString()}</Text>
-                <Text style={styles.yAxisLabel}>{(maxValue / 2).toLocaleString()}</Text>
-                <Text style={styles.yAxisLabel}>0</Text>
-            </View>
-
-            {/* Chart area */}
-            <View style={styles.chartArea}>
-                {/* Grid lines */}
-                <View style={styles.gridLines}>
-                    <View style={styles.gridLine} />
-                    <View style={styles.gridLine} />
-                    <View style={styles.gridLine} />
-                </View>
-
-                {/* Bars */}
-                <View style={styles.barsContainer}>
-                    {data.map((item, index) => {
-                        const barHeight = getBarHeight(item.value);
-                        const isToday = period === 'day' && index === data.length - 1;
-                        const isThisWeek = period === 'week' && index === data.length - 1;
-                        const isThisMonth = period === 'month' && index === data.length - 1;
-                        const isCurrent = isToday || isThisWeek || isThisMonth;
-
-                        return (
-                            <View key={index} style={styles.barWrapper}>
-                                <View style={styles.barColumn}>
-                                    {item.value > 0 && (
-                                        <View style={styles.valueContainer}>
-                                            <Text style={styles.valueText}>
-                                                {item.value >= 1000
-                                                    ? `${(item.value / 1000).toFixed(1)}k`
-                                                    : item.value}
-                                            </Text>
-                                        </View>
-                                    )}
-                                    <View
-                                        style={[
-                                            styles.bar,
-                                            {
-                                                height: Math.max(barHeight, 2),
-                                                backgroundColor: isCurrent ? Colors.primary : Colors.primaryLight,
-                                            },
-                                        ]}
-                                    />
-                                </View>
-                                <Text style={[styles.label, isCurrent && styles.labelActive]}>
-                                    {item.label}
-                                </Text>
-                            </View>
-                        );
-                    })}
-                </View>
-            </View>
+  return (
+    <View style={styles.container}>
+      {/* Chart area */}
+      <View style={styles.chartArea}>
+        {/* Y-axis labels */}
+        <View style={styles.yAxis}>
+          <Text style={styles.yLabel}>{Math.round(safeMaxValue)}</Text>
+          <Text style={styles.yLabel}>{Math.round(safeMaxValue * 0.5)}</Text>
+          <Text style={styles.yLabel}>0</Text>
         </View>
-    );
+
+        {/* Bars container */}
+        <View style={styles.barsContainer}>
+          {/* Horizontal grid lines */}
+          <View style={styles.gridLines}>
+            <View style={styles.gridLine} />
+            <View style={styles.gridLine} />
+            <View style={styles.gridLine} />
+          </View>
+
+          {/* Bars */}
+          <View style={styles.bars}>
+            {data.map((item, index) => {
+              const barHeight = (item.value / safeMaxValue) * CHART_HEIGHT;
+              return (
+                <View key={index} style={styles.barWrapper}>
+                  <View style={styles.barContainer}>
+                    <View
+                      style={[
+                        styles.bar,
+                        {
+                          height: Math.max(barHeight, 2), // Minimum 2px height
+                          width: barWidth,
+                          backgroundColor: Colors.primary,
+                        },
+                      ]}
+                    />
+                  </View>
+                  {/* X-axis label */}
+                  <Text style={styles.xLabel} numberOfLines={1}>
+                    {item.label}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+      </View>
+    </View>
+  );
 };
 
 const styles = StyleSheet.create({
-    container: {
-        flexDirection: 'row',
-        height: CHART_HEIGHT,
-        marginVertical: Spacing.md,
-    },
-    yAxis: {
-        width: 40,
-        justifyContent: 'space-between',
-        paddingRight: 8,
-        paddingVertical: 20,
-    },
-    yAxisLabel: {
-        fontSize: 10,
-        color: Colors.textSecondary,
-        textAlign: 'right',
-    },
-    chartArea: {
-        flex: 1,
-        position: 'relative',
-    },
-    gridLines: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: 20,
-        bottom: 20,
-        justifyContent: 'space-between',
-    },
-    gridLine: {
-        height: 1,
-        backgroundColor: Colors.borderLight,
-    },
-    barsContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        alignItems: 'flex-end',
-        height: CHART_HEIGHT - 40,
-        paddingTop: 20,
-        paddingBottom: 20,
-    },
-    barWrapper: {
-        alignItems: 'center',
-        flex: 1,
-    },
-    barColumn: {
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        flex: 1,
-        width: '100%',
-    },
-    valueContainer: {
-        marginBottom: 4,
-    },
-    valueText: {
-        fontSize: 9,
-        fontWeight: '600',
-        color: Colors.text,
-    },
-    bar: {
-        width: BAR_WIDTH,
-        borderRadius: 6,
-        minHeight: 2,
-    },
-    label: {
-        fontSize: 10,
-        color: Colors.textSecondary,
-        marginTop: 6,
-        fontWeight: '500',
-    },
-    labelActive: {
-        color: Colors.primary,
-        fontWeight: '700',
-    },
-    emptyContainer: {
-        height: CHART_HEIGHT,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    emptyText: {
-        fontSize: 12,
-        color: Colors.textSecondary,
-    },
+  container: {
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xs,
+  },
+  chartArea: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  yAxis: {
+    height: CHART_HEIGHT,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    paddingRight: 8,
+    paddingBottom: 4,
+    width: 40,
+  },
+  yLabel: {
+    fontSize: 10,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  barsContainer: {
+    flex: 1,
+    height: CHART_HEIGHT,
+    position: 'relative',
+  },
+  gridLines: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'space-between',
+    paddingBottom: 4,
+  },
+  gridLine: {
+    height: 1,
+    backgroundColor: Colors.borderLight,
+    opacity: 0.5,
+  },
+  bars: {
+    flexDirection: 'row',
+    justifyContent: 'space-evenly',
+    alignItems: 'flex-end',
+    height: '100%',
+    paddingBottom: 4,
+  },
+  barWrapper: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  barContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    width: '100%',
+  },
+  bar: {
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    minHeight: 2,
+  },
+  xLabel: {
+    fontSize: 9,
+    color: Colors.textSecondary,
+    marginTop: 6,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
 });
 
 export default BarChart;

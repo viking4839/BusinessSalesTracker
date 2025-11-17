@@ -655,7 +655,7 @@ const HomeScreen = ({ navigation, route }) => {
       <AddCashSaleDialog
         visible={showAddSaleDialog}
         onClose={() => setShowAddSaleDialog(false)}
-        onSubmit={handleNewManualSale}
+        onAddSale={handleNewManualSale}   // CHANGED from onSubmit to onAddSale
       />
     </View>
   );
@@ -668,9 +668,9 @@ const styles = StyleSheet.create({
   },
   gradientHeader: {
     backgroundColor: Colors.primaryStart,
-    paddingTop: Spacing.xl + 20,
+    paddingTop: Spacing.xl - 15,
     paddingHorizontal: Spacing.lg,
-    paddingBottom: 50,
+    paddingBottom: 35,
   },
   headerTop: {
     flexDirection: 'row',
@@ -684,7 +684,6 @@ const styles = StyleSheet.create({
     color: Colors.surface,
     marginBottom: 4,
     letterSpacing: 2,
-    fontStyle: 'italic',
     textTransform: 'uppercase',
     textShadowColor: 'rgba(255, 255, 255, 0.3)',
     textShadowOffset: { width: 1, height: 1 },

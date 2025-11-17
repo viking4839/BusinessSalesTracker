@@ -7,6 +7,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Text } from 'react-native';
+import { Home as HomeIcon, BarChart3, List } from 'lucide-react-native';
 
 // Screens
 import HomeScreen from './src/screens/HomeScreen';
@@ -48,6 +49,7 @@ function SettingsStack() {
       <Stack.Screen name="BusinessHours" component={BusinessHoursScreen} />
       <Stack.Screen name="CurrencySettings" component={CurrencySettingsScreen} />
       <Stack.Screen name="Debug" component={DebugScreen} />
+
     </Stack.Navigator>
   );
 }
@@ -63,14 +65,16 @@ function App() {
           tabBarStyle: {
             borderTopWidth: 1,
             borderTopColor: '#E5E5EA',
-            paddingTop: 8,
-            paddingBottom: 8,
+            paddingTop: 4,
+            paddingBottom: 6,
             height: 60,
+            backgroundColor: '#FFFFFF'
           },
           tabBarLabelStyle: {
             fontSize: 12,
             fontWeight: '600',
-          },
+            marginBottom: 2
+          }
         }}
       >
         <Tab.Screen
@@ -79,7 +83,7 @@ function App() {
           options={{
             tabBarLabel: 'Home',
             tabBarIcon: ({ color, size }) => (
-              <Text style={{ fontSize: 24 }}>🏠</Text>
+              <HomeIcon color={color} size={size ?? 24} strokeWidth={2} />
             ),
           }}
         />
@@ -89,17 +93,17 @@ function App() {
           options={{
             tabBarLabel: 'Analytics',
             tabBarIcon: ({ color, size }) => (
-              <Text style={{ fontSize: 24 }}>📊</Text>
+              <BarChart3 color={color} size={size ?? 24} strokeWidth={2} />
             ),
           }}
         />
         <Tab.Screen
-          name="Settings"
-          component={SettingsStack}
+          name="AllTransactions"
+          component={AllTransactionsScreen}
           options={{
-            tabBarLabel: 'Settings',
+            tabBarLabel: 'Transactions',
             tabBarIcon: ({ color, size }) => (
-              <Text style={{ fontSize: 24 }}>⚙️</Text>
+              <List color={color} size={size ?? 24} strokeWidth={2} />
             ),
           }}
         />

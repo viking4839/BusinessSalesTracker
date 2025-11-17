@@ -18,7 +18,9 @@ import {
     Clock
 } from 'lucide-react-native';
 
-const AddCashSaleDialog = ({ visible, onClose, onAddSale }) => {
+// Replace the component signature to accept both props
+const AddCashSaleDialog = (props) => {
+    const { visible, onClose, onAddSale, onSubmit } = props;
     const [formData, setFormData] = useState({
         amount: '',
         description: '',
@@ -33,13 +35,25 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale }) => {
             Alert.alert('Error', 'Please enter a valid amount');
             return;
         }
-
         if (!formData.description) {
             Alert.alert('Error', 'Please add a description');
             return;
         }
 
-        onAddSale(formData);
+        // Safely resolve handler: prefer onAddSale, fallback to onSubmit
+        const handler =
+            typeof onAddSale === 'function'
+                ? onAddSale
+                : typeof onSubmit === 'function'
+                    ? onSubmit
+                    : null;
+
+        if (!handler) {
+            Alert.alert('Error', 'Cash sale handler is not connected.');
+            return;
+        }
+
+        handler(formData);
 
         // Reset form
         setFormData({
