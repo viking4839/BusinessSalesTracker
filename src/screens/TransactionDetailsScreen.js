@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import {
     ArrowDownLeft, ArrowUpRight, Calendar, Clock, Building2,
-    User, MessageSquare, Hash, TrendingUp, Tag, ArrowLeft
+    User, MessageSquare, Hash, TrendingUp, Tag, ArrowLeft, Package
 } from 'lucide-react-native';
 import Button from '../components/Button';
 
@@ -167,6 +167,34 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                 </View>
             )}
 
+            {/* NEW: Show linked inventory item */}
+            {transaction.linkedInventoryId && (
+                <View style={[styles.section, styles.inventorySection]}>
+                    <View style={styles.sectionHeader}>
+                        <Package size={18} color={Colors.primary} />
+                        <Text style={styles.sectionTitle}>Linked Inventory</Text>
+                    </View>
+                    <View style={styles.inventoryDetails}>
+                        <View style={styles.detailRow}>
+                            <Text style={styles.detailLabel}>Item:</Text>
+                            <Text style={styles.detailValue}>{transaction.linkedInventoryName}</Text>
+                        </View>
+                        {transaction.saleQuantity && (
+                            <View style={styles.detailRow}>
+                                <Text style={styles.detailLabel}>Quantity:</Text>
+                                <Text style={styles.detailValue}>{transaction.saleQuantity} units</Text>
+                            </View>
+                        )}
+                        <View style={styles.detailRow}>
+                            <Text style={styles.detailLabel}>Stock Updated:</Text>
+                            <Text style={[styles.detailValue, { color: Colors.success }]}>
+                                {transaction.stockDeducted ? '✓ Yes' : '✗ No'}
+                            </Text>
+                        </View>
+                    </View>
+                </View>
+            )}
+
             {/* Actions */}
             <View style={styles.section}>
                 <Button
@@ -245,6 +273,15 @@ const styles = StyleSheet.create({
     scoreInfo: { flex: 1 },
     scoreTitle: { ...Typography.body, color: Colors.text, fontWeight: '600', marginBottom: 4 },
     scoreSubtitle: { ...Typography.caption, color: Colors.textSecondary },
+    inventorySection: {
+        backgroundColor: Colors.primaryLight,
+        borderLeftWidth: 3,
+        borderLeftColor: Colors.primary,
+    },
+    inventoryDetails: {
+        marginTop: Spacing.sm,
+        gap: Spacing.xs,
+    },
 });
 
 export default TransactionDetailsScreen;

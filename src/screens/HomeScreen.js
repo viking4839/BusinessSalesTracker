@@ -109,6 +109,31 @@ const HomeScreen = ({ navigation, route }) => {
     });
   };
 
+  const normalizeTransaction = (t) => {
+    if (!t) return null;
+    // Ensure timestamp unified
+    const rawTime = t.timestamp || t.date || t.time || t.createdAt;
+    const ts = rawTime ? new Date(rawTime) : new Date();
+    // Parse amount
+    let amt = t.amount;
+    if (typeof amt === 'string') {
+      const cleaned = amt.replace(/[^0-9.+-]/g, '');
+      const parsed = parseFloat(cleaned);
+      if (!isNaN(parsed)) amt = parsed;
+    }
+    // Ensure positive/negative preserved
+    if (typeof amt !== 'number' || isNaN(amt)) amt = 0;
+
+    return {
+      ...t,
+      amount: amt,
+      timestamp: ts.toISOString(), // canonical field
+      bank: t.bank || t.sourceBank || 'Unknown',
+      sender: t.sender || t.from || t.payer || 'Unknown',
+      source: t.source || (t.isManual ? 'manual' : 'sms_scan')
+    };
+  };
+
   const loadStoredTransactions = async () => {
     try {
       const stored = await TransactionStorage.loadTransactions();
@@ -124,10 +149,11 @@ const HomeScreen = ({ navigation, route }) => {
         setYesterdayRevenue(0);
         return;
       }
-      setTransactions(stored);
-      filterBusinessTransactions(stored);
-      calculateMetrics(stored);
-      setActiveBanks(buildActiveBanks(stored));
+      const normalized = stored.map(normalizeTransaction).filter(Boolean);
+      setTransactions(normalized);
+      filterBusinessTransactions(normalized);
+      calculateMetrics(normalized);
+      setActiveBanks(buildActiveBanks(normalized));
     } catch (error) {
       console.error('loadStoredTransactions error:', error);
     }
@@ -172,43 +198,39 @@ const HomeScreen = ({ navigation, route }) => {
     console.log('🔍 Starting SMS scan...');
 
     try {
-      // Scan last 200 SMS messages
       const scannedTransactions = await SMSReader.scanRecentTransactions(200);
-      console.log(`📨 Scanned ${scannedTransactions.length} transactions from SMS`);
+      const normalizedScanned = (scannedTransactions || []).map(normalizeTransaction);
 
-      // Get existing transactions
       const existingTransactions = await TransactionStorage.loadTransactions();
-      const existingIds = new Set(existingTransactions.map(t => t.id));
+      const normalizedExisting = (existingTransactions || []).map(normalizeTransaction);
+      const existingIds = new Set(normalizedExisting.map(t => t.id));
 
-      // Filter out duplicates
-      const newTransactions = scannedTransactions.filter(t => !existingIds.has(t.id));
+      const newTransactions = normalizedScanned.filter(t => !existingIds.has(t.id));
       console.log(`✨ Found ${newTransactions.length} new transactions`);
 
       if (newTransactions.length > 0) {
-        // Merge new with existing
-        const mergedTransactions = [...newTransactions, ...existingTransactions];
-
-        // Save to storage
-        await TransactionStorage.saveTransactions(mergedTransactions);
-
-        // Update UI
-        setTransactions(mergedTransactions);
-        filterBusinessTransactions(mergedTransactions);
-        calculateMetrics(mergedTransactions);
-        setActiveBanks(buildActiveBanks(mergedTransactions));
+        const merged = [...newTransactions, ...normalizedExisting];
+        await TransactionStorage.saveTransactions(merged);
+        setTransactions(merged);
+        filterBusinessTransactions(merged);
+        calculateMetrics(merged);
+        setActiveBanks(buildActiveBanks(merged));
 
         Alert.alert(
           '✅ Scan Complete',
-          `Found ${newTransactions.length} new transactions!\n\n` +
-          `Business income: ${newTransactions.filter(t => t.amount > 0).length} transactions`,
+          `Added ${newTransactions.length} new transactions.\n\n` +
+          `Today's revenue: Ksh ${merged
+            .filter(t => {
+              const d = new Date(t.timestamp);
+              return !isNaN(d) &&
+                d >= new Date(new Date().setHours(0, 0, 0, 0)) &&
+                t.amount > 0;
+            })
+            .reduce((s, t) => s + t.amount, 0).toLocaleString()}`,
           [{ text: 'Great!' }]
         );
       } else {
-        Alert.alert(
-          'Scan Complete',
-          'No new transactions found. All SMS already scanned.',
-          [{ text: 'OK' }]
-        );
+        Alert.alert('Scan Complete', 'No new transactions found.', [{ text: 'OK' }]);
       }
     } catch (error) {
       console.error('❌ SMS Scan Error:', error);
@@ -242,32 +264,22 @@ const HomeScreen = ({ navigation, route }) => {
     const banks = {};
 
     allTransactions.forEach(transaction => {
-      const transactionDate = new Date(transaction.timestamp);
-      const amount = Math.abs(transaction.amount);
+      const rawTime = transaction.timestamp || transaction.date || transaction.time || transaction.createdAt;
+      const transactionDate = rawTime ? new Date(rawTime) : null;
+      if (!transactionDate || isNaN(transactionDate)) return;
 
-      // Only count incoming payments (positive amounts)
-      if (transaction.amount > 0) {
-        if (transactionDate >= todayStart) {
-          todayTotal += amount;
-        }
-        if (transactionDate >= yesterdayStart && transactionDate < todayStart) {
-          yesterdayTotal += amount;
-        }
-        if (transactionDate >= weekStart) {
-          weekTotal += amount;
-        }
-        if (transactionDate >= monthStart) {
-          monthTotal += amount;
-        }
+      const amount = Number(transaction.amount);
+      if (isNaN(amount) || amount <= 0) return; // only count incoming
 
-        // Track by bank
-        const bankName = transaction.bank || 'Unknown';
-        if (!banks[bankName]) {
-          banks[bankName] = { count: 0, total: 0 };
-        }
-        banks[bankName].count++;
-        banks[bankName].total += amount;
-      }
+      if (transactionDate >= todayStart) todayTotal += amount;
+      if (transactionDate >= yesterdayStart && transactionDate < todayStart) yesterdayTotal += amount;
+      if (transactionDate >= weekStart) weekTotal += amount;
+      if (transactionDate >= monthStart) monthTotal += amount;
+
+      const bankName = transaction.bank || 'Unknown';
+      if (!banks[bankName]) banks[bankName] = { count: 0, total: 0 };
+      banks[bankName].count++;
+      banks[bankName].total += amount;
     });
 
     setTodayRevenue(todayTotal);
@@ -340,28 +352,40 @@ const HomeScreen = ({ navigation, route }) => {
   };
 
   const handleNewManualSale = async (saleData) => {
-    const newTransaction = {
-      id: `manual_${Date.now()}`,
-      amount: parseFloat(saleData.amount),
-      sender: saleData.customerName || 'Cash Sale',
-      phone: saleData.customerPhone || null,
-      timestamp: new Date().toISOString(),
-      type: 'received',
-      transactionType: 'received',
-      message: saleData.description || 'Manual cash sale entry',
-      bank: 'Cash',
-      source: 'manual',
-      category: saleData.category || 'general',
-    };
+    try {
+      const newTransaction = {
+        id: `manual_${Date.now()}`,
+        amount: Number(saleData.amount),
+        sender: saleData.customerName || 'Cash Customer',
+        phone: saleData.phone || null,
+        timestamp: new Date().toISOString(),
+        type: 'received',
+        transactionType: 'received',
+        message: saleData.notes || 'Manual cash sale',
+        bank: saleData.paymentMethod || 'Cash',
+        source: 'manual',
+        isBusinessTransaction: true,
+        isManual: true,
+        category: 'general',
+        // NEW: Inventory link fields
+        linkedInventoryId: saleData.linkedInventoryId || null,
+        linkedInventoryName: saleData.linkedInventoryName || null,
+        saleQuantity: saleData.saleQuantity || null,
+        stockDeducted: !!saleData.linkedInventoryId,
+      };
 
-    console.log('💵 Adding manual sale:', newTransaction);
+      console.log('💵 Adding manual sale:', newTransaction);
 
-    const updatedTransactions = [newTransaction, ...transactions];
-    setTransactions(updatedTransactions);
-    await TransactionStorage.saveTransactions(updatedTransactions);
-    filterBusinessTransactions(updatedTransactions);
-    calculateMetrics(updatedTransactions);
-    setActiveBanks(buildActiveBanks(updatedTransactions));
+      const updatedTransactions = [newTransaction, ...transactions];
+      setTransactions(updatedTransactions);
+      await TransactionStorage.saveTransactions(updatedTransactions);
+      filterBusinessTransactions(updatedTransactions);
+      calculateMetrics(updatedTransactions);
+      setActiveBanks(buildActiveBanks(updatedTransactions));
+    } catch (error) {
+      console.error('Add manual sale error:', error);
+      Alert.alert('Error', 'Failed to record sale');
+    }
   };
 
   const onRefresh = useCallback(async () => {
@@ -635,7 +659,7 @@ const HomeScreen = ({ navigation, route }) => {
 
               <TouchableOpacity
                 style={styles.viewAllButton}
-                onPress={() => navigation.navigate('AllTransactions')}
+                onPress={() => navigation.navigate('Transactions', { screen: 'TransactionsList' })}
               >
                 <Text style={styles.viewAllText}>View All Transactions</Text>
                 <Text style={styles.viewAllArrow}>›</Text>
