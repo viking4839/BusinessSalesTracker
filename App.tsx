@@ -7,7 +7,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Text } from 'react-native';
-import { Home as HomeIcon, BarChart3, List } from 'lucide-react-native';
+import { Home as HomeIcon, BarChart3, List, } from 'lucide-react-native';
 
 // Screens
 import HomeScreen from './src/screens/HomeScreen';
@@ -34,6 +34,7 @@ function HomeStack() {
       <Stack.Screen name="AllTransactions" component={AllTransactionsScreen} />
       <Stack.Screen name="TransactionDetails" component={TransactionDetailsScreen} />
       <Stack.Screen name="AddCashSale" component={AddCashSaleScreen} />
+      <Stack.Screen name="Settings" component={SettingsStack} />
     </Stack.Navigator>
   );
 }
@@ -105,6 +106,15 @@ function App() {
             tabBarIcon: ({ color, size }) => (
               <List color={color} size={size ?? 24} strokeWidth={2} />
             ),
+          }}
+        />
+        {/* Hidden screen - no tab button, accessible via navigation */}
+        <Tab.Screen
+          name="TransactionDetails"
+          component={TransactionDetailsScreen}
+          options={{
+            tabBarButton: () => null, // Hides from tab bar
+            tabBarStyle: { display: 'none' } // Hide tab bar when this screen is active
           }}
         />
       </Tab.Navigator>

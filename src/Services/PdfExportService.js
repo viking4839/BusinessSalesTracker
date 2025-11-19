@@ -1,93 +1,126 @@
+// Add a runtime guard + fallback (CSV) so app doesn’t crash when convert is undefined
 import RNHTMLtoPDF from 'react-native-html-to-pdf';
-import { PermissionsAndroid, Platform, Alert } from 'react-native';
+import { PermissionsAndroid, Platform, Alert, Share } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 class PdfExportService {
-    async requestStoragePermission() {
-        if (Platform.OS !== 'android') return true;
-
-        try {
-            const granted = await PermissionsAndroid.request(
-                PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-                {
-                    title: 'Storage Permission',
-                    message: 'Track Biz needs storage access to export PDF',
-                    buttonPositive: 'OK',
-                }
-            );
-            return granted === PermissionsAndroid.RESULTS.GRANTED;
-        } catch (err) {
-            console.error('Permission error:', err);
-            return false;
+  async requestStoragePermission() {
+    if (Platform.OS !== 'android') return true;
+    const release = Platform.constants?.Release;
+    const sdkNum = release ? parseInt(release, 10) : 0;
+    if (sdkNum >= 13) return true;
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+        {
+          title: 'Storage Permission',
+          message: 'Allow saving exported PDF',
+          buttonPositive: 'OK'
         }
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    } catch(e) {
+      console.warn('Permission request error', e);
+      return false;
+    }
+  }
+
+  async exportTransactionsPdf(transactions, filename='Transactions') {
+    const hasPermission = await this.requestStoragePermission();
+    if (!hasPermission) console.warn('Proceeding without external storage permission');
+
+    if (!transactions || transactions.length === 0) {
+      Alert.alert('No Data','No transactions to export.');
+      return false;
     }
 
-    async exportTransactionsToPDF() {
-        const hasPermission = await this.requestStoragePermission();
-        if (!hasPermission) {
-            Alert.alert('Permission Denied', 'Storage permission is required to export PDF');
-            return null;
-        }
-
-        try {
-            // Load transactions from AsyncStorage
-            const data = await AsyncStorage.getItem('transactions');
-            const transactions = data ? JSON.parse(data) : [];
-
-            if (transactions.length === 0) {
-                Alert.alert('No Data', 'No transactions to export');
-                return null;
-            }
-
-            // Load profile data
-            const profileData = await AsyncStorage.getItem('profile');
-            const profile = profileData ? JSON.parse(profileData) : { name: 'Track Biz User' };
-
-            const htmlContent = this.generateHTML(transactions, profile);
-
-            const options = {
-                html: htmlContent,
-                fileName: `TrackBiz_Transactions_${new Date().getTime()}`,
-                directory: 'Documents',
-            };
-
-            const file = await RNHTMLtoPDF.convert(options);
-            return file.filePath;
-        } catch (error) {
-            console.error('PDF Export Error:', error);
-            Alert.alert('Export Failed', 'Could not generate PDF. Please try again.');
-            return null;
-        }
+    // DEBUG: check module
+    if (!RNHTMLtoPDF || typeof RNHTMLtoPDF.convert !== 'function') {
+      console.warn('RNHTMLtoPDF.convert missing. Fallback to CSV.');
+      const csv = this.generateCSV(transactions);
+      await this.shareFallback(csv, filename);
+      Alert.alert('PDF Module Missing','Shared CSV instead.');
+      return false;
     }
 
-    generateHTML(transactions, profile) {
-        const now = new Date();
-        const dateStr = now.toLocaleDateString('en-US', {
-            year: 'numeric', month: 'long', day: 'numeric'
-        });
+    try {
+      const profileData = await AsyncStorage.getItem('profile');
+      const profile = profileData ? JSON.parse(profileData) : { name: 'Track Biz User' };
+      const htmlContent = this.generateHTML(transactions, profile, filename);
+      const file = await RNHTMLtoPDF.convert({
+        html: htmlContent,
+        fileName: `${filename}_${Date.now()}`,
+        directory: 'Documents'
+      });
+      Alert.alert('Export Successful', `PDF saved:\n${file.filePath}`);
+      return true;
+    } catch(err) {
+      console.error('PDF Export Error', err);
+      Alert.alert('Export Failed', err.message || 'Could not generate PDF');
+      return false;
+    }
+  }
 
-        // Calculate totals
-        const totalReceived = transactions
-            .filter(t => Number(t.amount) > 0)
-            .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+  async shareFallback(content, filename) {
+    try {
+      await Share.share({
+        title: filename,
+        message: content
+      });
+    } catch(e) {
+      console.warn('Share fallback failed', e);
+    }
+  }
 
-        const businessReceived = transactions
-            .filter(t => t.isBusinessTransaction && Number(t.amount) > 0)
-            .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+  generateCSV(transactions) {
+    const headers = ['Date','Time','Bank','Sender','Amount','Direction','Business'].join(',');
+    const rows = transactions.map(t => {
+      const d = new Date(t.timestamp || t.date);
+      return [
+        d.toLocaleDateString(),
+        d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),
+        `"${(t.bank||'Unknown').replace(/"/g,'""')}"`,
+        `"${(t.sender||'Unknown').replace(/"/g,'""')}"`,
+        Math.abs(Number(t.amount)||0),
+        Number(t.amount)>0?'IN':'OUT',
+        t.isBusinessTransaction?'Yes':'No'
+      ].join(',');
+    });
+    return [headers, ...rows].join('\n');
+  }
 
-        const manualSales = transactions.filter(t => t.isManual).length;
-        const smsParsed = transactions.filter(t => !t.isManual).length;
+  generateHTML(transactions, profile, title='Transaction Report') {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-US', {
+        year: 'numeric', month: 'long', day: 'numeric'
+    });
 
-        // Generate transaction rows
-        const transactionRows = transactions.map((t, index) => {
-            const date = new Date(t.timestamp || t.date);
-            const isIn = Number(t.amount) > 0;
-            const source = t.isManual ? 'Manual Entry' : 'SMS Parsed';
+    // Calculate totals
+    const totalReceived = transactions
+        .filter(t => Number(t.amount) > 0)
+        .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
 
-            return `
+    const totalSent = transactions
+        .filter(t => Number(t.amount) < 0)
+        .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+
+    const businessReceived = transactions
+        .filter(t => t.isBusinessTransaction && Number(t.amount) > 0)
+        .reduce((sum, t) => sum + Math.abs(Number(t.amount) || 0), 0);
+
+    const manualSales = transactions.filter(t => t.isManual).length;
+    const smsParsed = transactions.filter(t => !t.isManual).length;
+
+    // Generate transaction rows
+    const transactionRows = transactions.map((t, index) => {
+        const date = new Date(t.timestamp || t.date);
+        const isIn = Number(t.amount) > 0;
+        const source = t.isManual ? 'Manual Entry' : 'SMS Parsed';
+
+        return `
         <tr style="border-bottom: 1px solid #e5e7eb;">
           <td style="padding: 12px 8px; font-size: 11px;">${index + 1}</td>
-          <td style="padding: 12px 8px; font-size: 11px;">${date.toLocaleString()}</td>
+          <td style="padding: 12px 8px; font-size: 11px;">${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
           <td style="padding: 12px 8px; font-size: 11px;">${t.sender || t.from || 'Unknown'}</td>
           <td style="padding: 12px 8px; font-size: 11px;">${t.bank || 'N/A'}</td>
           <td style="padding: 12px 8px; font-size: 11px; color: ${isIn ? '#10b981' : '#ef4444'}; font-weight: 600;">
@@ -101,9 +134,9 @@ class PdfExportService {
           </td>
         </tr>
       `;
-        }).join('');
+    }).join('');
 
-        return `
+    return `
       <!DOCTYPE html>
       <html>
         <head>
@@ -182,13 +215,13 @@ class PdfExportService {
         <body>
           <div class="header">
             <div class="logo">Track Biz</div>
-            <div class="subtitle">Transaction Report</div>
+            <div class="subtitle">${title}</div>
             <div style="font-size: 11px; color: #6b7280; margin-top: 5px;">Generated on ${dateStr}</div>
           </div>
 
           <div style="margin-bottom: 20px;">
             <div style="font-size: 12px; color: #6b7280;">Account Holder</div>
-            <div style="font-size: 16px; font-weight: 600; color: #111827;">${profile.name}</div>
+            <div style="font-size: 16px; font-weight: 600; color: #111827;">${profile.name || 'Business Owner'}</div>
           </div>
 
           <div class="info-section">
@@ -197,20 +230,20 @@ class PdfExportService {
               <div class="info-value">${transactions.length}</div>
             </div>
             <div class="info-item">
-              <div class="info-label">Total Received</div>
+              <div class="info-label">Total In</div>
               <div class="info-value" style="color: #10b981;">KSh ${totalReceived.toLocaleString()}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Total Out</div>
+              <div class="info-value" style="color: #ef4444;">KSh ${totalSent.toLocaleString()}</div>
             </div>
             <div class="info-item">
               <div class="info-label">Business Revenue</div>
               <div class="info-value" style="color: #4f46e5;">KSh ${businessReceived.toLocaleString()}</div>
             </div>
             <div class="info-item">
-              <div class="info-label">Manual Sales</div>
-              <div class="info-value">${manualSales}</div>
-            </div>
-            <div class="info-item">
-              <div class="info-label">SMS Parsed</div>
-              <div class="info-value">${smsParsed}</div>
+              <div class="info-label">Net</div>
+              <div class="info-value" style="color: ${totalReceived - totalSent >= 0 ? '#10b981' : '#ef4444'};">KSh ${(totalReceived - totalSent).toLocaleString()}</div>
             </div>
           </div>
 
@@ -238,7 +271,7 @@ class PdfExportService {
         </body>
       </html>
     `;
-    }
+  }
 }
 
 export default new PdfExportService();

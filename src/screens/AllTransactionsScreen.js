@@ -245,7 +245,7 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                 <View style={styles.header}>
                     <View style={{ flex: 1 }}>
                         <Text style={styles.title}>Transactions</Text>
-                        
+
                     </View>
                     <View style={styles.headerActions}>
                         <TouchableOpacity
