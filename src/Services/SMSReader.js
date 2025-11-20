@@ -1,5 +1,6 @@
 import { PermissionsAndroid, Platform, ToastAndroid } from 'react-native';
 import SmsAndroid from 'react-native-get-sms-android';
+import InventoryStorage from '../utils/InventoryStorage';
 
 class SMSReader {
     constructor() {
@@ -114,6 +115,13 @@ class SMSReader {
 
             const messages = await this.readRealSMS(limit);
             const transactions = this.parseMessages(messages);
+
+            // NEW: Add inventory match data to each incoming transaction
+            for (const tx of transactions) {
+                if (Number(tx.amount) > 0) { // Only for incoming money
+                    tx.inventoryMatch = await SMSReader.findInventoryMatches(tx);
+                }
+            }
 
             this.lastScanTime = new Date();
 
@@ -365,6 +373,69 @@ class SMSReader {
             lastScanTime: this.lastScanTime,
             canScan: this.hasPermission,
         };
+    }
+
+    // NEW: Find inventory matches for a transaction
+    static async findInventoryMatches(transaction) {
+        try {
+            const amount = Math.abs(Number(transaction.amount));
+            if (amount <= 0 || Number(transaction.amount) <= 0) return null; // Only for incoming
+
+            const inventory = await InventoryStorage.loadInventory();
+            if (!inventory || inventory.length === 0) return null;
+
+            // Find exact price matches
+            const exactMatches = inventory.filter(item => 
+                item.unitPrice === amount && item.quantity > 0
+            );
+
+            // Find quantity matches (e.g., Ksh 140 = 2 × Ksh 70 item)
+            const quantityMatches = inventory.filter(item => {
+                if (item.unitPrice === 0 || item.quantity === 0) return false;
+                const qty = amount / item.unitPrice;
+                return Number.isInteger(qty) && qty > 0 && qty <= 10; // Max 10 units per transaction
+            });
+
+            // Combine and deduplicate
+            const allMatchesMap = new Map();
+            [...exactMatches, ...quantityMatches].forEach(item => {
+                if (!allMatchesMap.has(item.id)) {
+                    allMatchesMap.set(item.id, item);
+                }
+            });
+            const allMatches = Array.from(allMatchesMap.values());
+
+            if (allMatches.length === 0) return null;
+
+            if (allMatches.length === 1) {
+                // Single match - high confidence
+                const match = allMatches[0];
+                const qty = Math.round(amount / match.unitPrice);
+                return {
+                    matchType: 'single',
+                    item: match,
+                    suggestedQuantity: qty,
+                    confidence: 'high',
+                    userConfirmed: false,
+                    userDismissed: false,
+                };
+            }
+
+            // Multiple matches - needs user choice
+            return {
+                matchType: 'multiple',
+                matches: allMatches.map(item => ({
+                  item,
+                  suggestedQuantity: Math.round(amount / item.unitPrice),
+                })),
+                confidence: 'low',
+                userConfirmed: false,
+                userDismissed: false,
+            };
+        } catch (error) {
+            console.error('findInventoryMatches error:', error);
+            return null;
+        }
     }
 }
 

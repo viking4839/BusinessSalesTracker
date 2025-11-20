@@ -26,6 +26,7 @@ import {
   Plus,
   Eye,
   EyeOff,
+  Package,
 } from 'lucide-react-native';
 import SMSReader from '../services/SMSReader';
 import TransactionStorage from '../utils/TransactionStorage';
@@ -611,51 +612,79 @@ const HomeScreen = ({ navigation, route }) => {
             </View>
           ) : (
             <View style={styles.transactionsList}>
-              {businessTransactions.slice(0, 10).map((transaction, index) => (
-                <TouchableOpacity
-                  key={transaction.id || index}
-                  style={styles.transactionItem}
-                  onPress={() => navigation.navigate('TransactionDetails', { transaction })}
-                >
-                  <View style={styles.transactionIcon}>
-                    {transaction.amount > 0 ? (
-                      <ArrowDownLeft size={16} color={Colors.success} />
-                    ) : (
-                      <ArrowUpRight size={16} color={Colors.error} />
-                    )}
-                  </View>
+              {businessTransactions.slice(0, 10).map((transaction, index) => {
+                // Check if transaction has pending inventory match
+                const hasMatch = transaction.inventoryMatch &&
+                  !transaction.inventoryMatch.userConfirmed &&
+                  !transaction.inventoryMatch.userDismissed;
 
-                  <View style={styles.transactionDetails}>
-                    <Text style={styles.transactionSender} numberOfLines={1}>
-                      {transaction.sender || 'Unknown'}
-                    </Text>
-                    <View style={styles.transactionMeta}>
-                      <Text style={styles.transactionBank}>{transaction.bank}</Text>
-                      {transaction.source === 'manual' && (
-                        <>
-                          <Text style={styles.transactionDot}>•</Text>
-                          <View style={styles.businessBadge}>
-                            <Text style={styles.businessBadgeText}>Manual</Text>
-                          </View>
-                        </>
+                return (
+                  <TouchableOpacity
+                    key={transaction.id || index}
+                    style={styles.transactionItem}
+                    onPress={() => navigation.navigate('Transactions', {
+                      screen: 'TransactionDetails',
+                      params: { transaction }
+                    })}
+                  >
+                    <View style={styles.transactionIconWrapper}>
+                      <View style={styles.transactionIcon}>
+                        {transaction.amount > 0 ? (
+                          <ArrowDownLeft size={16} color={Colors.success} />
+                        ) : (
+                          <ArrowUpRight size={16} color={Colors.error} />
+                        )}
+                      </View>
+
+                      {/* NEW: Inventory Match Badge */}
+                      {hasMatch && (
+                        <View style={styles.matchBadge}>
+                          <Package size={10} color={Colors.surface} />
+                        </View>
                       )}
                     </View>
-                    <Text style={styles.transactionTime}>
-                      {new Date(transaction.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </Text>
-                  </View>
 
-                  <Text style={[
-                    styles.transactionAmount,
-                    { color: transaction.amount > 0 ? Colors.success : Colors.error }
-                  ]}>
-                    {transaction.amount > 0 ? '+' : ''} Ksh {Math.abs(transaction.amount).toLocaleString()}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    <View style={styles.transactionDetails}>
+                      <Text style={styles.transactionSender} numberOfLines={1}>
+                        {transaction.sender || 'Unknown'}
+                      </Text>
+                      <View style={styles.transactionMeta}>
+                        <Text style={styles.transactionBank}>{transaction.bank}</Text>
+                        {transaction.source === 'manual' && (
+                          <>
+                            <Text style={styles.transactionDot}>•</Text>
+                            <View style={styles.businessBadge}>
+                              <Text style={styles.businessBadgeText}>Manual</Text>
+                            </View>
+                          </>
+                        )}
+                        {/* NEW: Show inventory match indicator */}
+                        {hasMatch && (
+                          <>
+                            <Text style={styles.transactionDot}>•</Text>
+                            <View style={[styles.businessBadge, { backgroundColor: '#FEF3C7' }]}>
+                              <Text style={[styles.businessBadgeText, { color: '#F59E0B' }]}>Match</Text>
+                            </View>
+                          </>
+                        )}
+                      </View>
+                      <Text style={styles.transactionTime}>
+                        {new Date(transaction.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </Text>
+                    </View>
+
+                    <Text style={[
+                      styles.transactionAmount,
+                      { color: transaction.amount > 0 ? Colors.success : Colors.error }
+                    ]}>
+                      {transaction.amount > 0 ? '+' : ''} Ksh {Math.abs(transaction.amount).toLocaleString()}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
 
               <TouchableOpacity
                 style={styles.viewAllButton}
@@ -935,6 +964,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderLight,
   },
+  transactionIconWrapper: {
+    position: 'relative',
+    marginRight: Spacing.sm,
+  },
   transactionIcon: {
     width: 32,
     height: 32,
@@ -942,7 +975,20 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: Spacing.sm,
+  },
+  matchBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: Colors.surface,
+    ...Shadows.sm,
   },
   transactionDetails: {
     flex: 1,

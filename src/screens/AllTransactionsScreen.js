@@ -12,7 +12,7 @@ import {
     Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ArrowDownLeft, ArrowUpRight, Filter, Search, X, Download, Calendar } from 'lucide-react-native';
+import { ArrowDownLeft, ArrowUpRight, Filter, Search, X, Download, Calendar, Package } from 'lucide-react-native'; // ✅ Added Package
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import PdfExportService from '../services/PdfExportService';
 
@@ -182,17 +182,33 @@ class AllTransactionsScreenImpl extends React.PureComponent {
 
     renderItem = ({ item }) => {
         const isIn = Number(item.amount) > 0;
+
+        // ✅ Check for inventory match
+        const hasMatch = item.inventoryMatch &&
+            !item.inventoryMatch.userConfirmed &&
+            !item.inventoryMatch.userDismissed;
+
         return (
             <TouchableOpacity
                 style={styles.row}
                 onPress={() => this.props.navigation.navigate('TransactionDetails', { transaction: item })}
                 activeOpacity={0.7}
             >
-                <View style={[styles.icon, { backgroundColor: Colors.background }]}>
-                    {isIn ? (
-                        <ArrowDownLeft size={16} color={Colors.success} />
-                    ) : (
-                        <ArrowUpRight size={16} color={Colors.error} />
+                {/* ✅ Wrapped icon in container for badge positioning */}
+                <View style={styles.iconWrapper}>
+                    <View style={[styles.icon, { backgroundColor: Colors.background }]}>
+                        {isIn ? (
+                            <ArrowDownLeft size={16} color={Colors.success} />
+                        ) : (
+                            <ArrowUpRight size={16} color={Colors.error} />
+                        )}
+                    </View>
+
+                    {/* ✅ Match Badge */}
+                    {hasMatch && (
+                        <View style={styles.matchBadge}>
+                            <Package size={10} color={Colors.surface} />
+                        </View>
                     )}
                 </View>
 
@@ -207,6 +223,15 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                                 <Text style={styles.dot}>•</Text>
                                 <View style={styles.bizBadge}>
                                     <Text style={styles.bizBadgeText}>Business</Text>
+                                </View>
+                            </>
+                        )}
+                        {/* ✅ Show "Match" text badge */}
+                        {hasMatch && (
+                            <>
+                                <Text style={styles.dot}>•</Text>
+                                <View style={[styles.bizBadge, { backgroundColor: '#FEF3C7' }]}>
+                                    <Text style={[styles.bizBadgeText, { color: '#F59E0B' }]}>Match</Text>
                                 </View>
                             </>
                         )}
@@ -514,10 +539,39 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.sm,
     },
     sep: { height: 1, backgroundColor: Colors.borderLight, marginLeft: Spacing.md + 32 + 8 },
-    icon: {
-        width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center',
+
+    // ✅ NEW: Icon wrapper for badge positioning
+    iconWrapper: {
+        position: 'relative',
         marginRight: Spacing.sm,
     },
+    icon: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    // ✅ NEW: Match badge styles
+    matchBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        backgroundColor: Colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: Colors.surface,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 2,
+    },
+
     details: { flex: 1, marginRight: Spacing.sm },
     sender: { fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 3 },
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },

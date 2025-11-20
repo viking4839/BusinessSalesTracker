@@ -1,16 +1,198 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import {
     ArrowDownLeft, ArrowUpRight, Calendar, Clock, Building2,
-    User, MessageSquare, Hash, TrendingUp, Tag, ArrowLeft, Package
+    User, MessageSquare, Hash, TrendingUp, Tag, ArrowLeft, Package, CheckCircle, XCircle
 } from 'lucide-react-native';
 import Button from '../components/Button';
+import InventoryStorage from '../utils/InventoryStorage';
+import TransactionStorage from '../utils/TransactionStorage';
 
 const TransactionDetailsScreen = ({ route, navigation }) => {
     const { transaction } = route.params;
-    const isIncoming = Number(transaction.amount) > 0;
+    const [localTransaction, setLocalTransaction] = useState(transaction);
+    const isIncoming = Number(localTransaction.amount) > 0;
+
+    // Handle confirming a match and updating inventory
+    const handleConfirmMatch = async (matchItem, quantity) => {
+        try {
+            // Deduct stock
+            const success = await InventoryStorage.adjustQuantity(matchItem.id, -quantity);
+            if (!success) {
+                Alert.alert('Error', 'Failed to update inventory. Item may be out of stock.');
+                return;
+            }
+
+            // Update transaction with linked inventory
+            const updated = {
+                ...localTransaction,
+                linkedInventoryId: matchItem.id,
+                linkedInventoryName: matchItem.name,
+                saleQuantity: quantity,
+                stockDeducted: true,
+                inventoryMatch: localTransaction.inventoryMatch
+                    ? { ...localTransaction.inventoryMatch, userConfirmed: true }
+                    : null,
+            };
+
+            // Save to storage
+            const allTransactions = await TransactionStorage.loadTransactions();
+            const index = allTransactions.findIndex(t => t.id === localTransaction.id);
+            if (index !== -1) {
+                allTransactions[index] = updated;
+                await TransactionStorage.saveTransactions(allTransactions);
+            }
+
+            setLocalTransaction(updated);
+            Alert.alert(
+                '✅ Linked Successfully',
+                `Inventory updated:\n${matchItem.name} (-${quantity} units)`,
+                [{ text: 'Great!' }]
+            );
+        } catch (error) {
+            console.error('handleConfirmMatch error:', error);
+            Alert.alert('Error', 'Failed to link inventory');
+        }
+    };
+
+    // Handle dismissing a match suggestion
+    const handleDismissMatch = async () => {
+        try {
+            const updated = {
+                ...localTransaction,
+                inventoryMatch: localTransaction.inventoryMatch
+                    ? { ...localTransaction.inventoryMatch, userDismissed: true }
+                    : null,
+            };
+
+            const allTransactions = await TransactionStorage.loadTransactions();
+            const index = allTransactions.findIndex(t => t.id === localTransaction.id);
+            if (index !== -1) {
+                allTransactions[index] = updated;
+                await TransactionStorage.saveTransactions(allTransactions);
+            }
+
+            setLocalTransaction(updated);
+        } catch (error) {
+            console.error('handleDismissMatch error:', error);
+        }
+    };
+
+    // Render match suggestion card (single match)
+    const renderSingleMatchSuggestion = () => {
+        const match = localTransaction.inventoryMatch;
+        if (!match || match.matchType !== 'single') return null;
+        if (match.userConfirmed || match.userDismissed) return null;
+
+        return (
+            <View style={[styles.section, styles.suggestionCard]}>
+                <View style={styles.suggestionHeader}>
+                    <Package size={20} color={Colors.primary} />
+                    <Text style={styles.suggestionTitle}>Inventory Match Found!</Text>
+                </View>
+                <View style={styles.suggestionContent}>
+                    <Text style={styles.suggestionItemName}>{match.item.name}</Text>
+                    <Text style={styles.suggestionDetails}>
+                        {match.suggestedQuantity} × Ksh {match.item.unitPrice.toLocaleString()} = Ksh {Math.abs(Number(localTransaction.amount)).toLocaleString()}
+                    </Text>
+                    <Text style={styles.suggestionStock}>
+                        Stock available: {match.item.quantity} units
+                    </Text>
+                </View>
+                <View style={styles.suggestionActions}>
+                    <TouchableOpacity
+                        style={styles.dismissBtn}
+                        onPress={handleDismissMatch}
+                    >
+                        <XCircle size={16} color={Colors.textSecondary} />
+                        <Text style={styles.dismissText}>Not this item</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.confirmBtn}
+                        onPress={() => handleConfirmMatch(match.item, match.suggestedQuantity)}
+                    >
+                        <CheckCircle size={16} color={Colors.surface} />
+                        <Text style={styles.confirmText}>Link & Update Stock</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        );
+    };
+
+    // Render match suggestion card (multiple matches)
+    const renderMultipleMatchSuggestion = () => {
+        const match = localTransaction.inventoryMatch;
+        if (!match || match.matchType !== 'multiple') return null;
+        if (match.userConfirmed || match.userDismissed) return null;
+
+        return (
+            <View style={[styles.section, styles.suggestionCard, { backgroundColor: '#fef3c7' }]}>
+                <View style={styles.suggestionHeader}>
+                    <Package size={20} color="#f59e0b" />
+                    <Text style={styles.suggestionTitle}>
+                        {match.matches.length} Possible Matches
+                    </Text>
+                </View>
+                <Text style={styles.suggestionSubtitle}>Select the item that was sold:</Text>
+                {match.matches.map((m, idx) => (
+                    <TouchableOpacity
+                        key={idx}
+                        style={styles.matchOption}
+                        onPress={() => handleConfirmMatch(m.item, m.suggestedQuantity)}
+                    >
+                        <View style={styles.matchOptionContent}>
+                            <Text style={styles.matchOptionName}>{m.item.name}</Text>
+                            <Text style={styles.matchOptionDetails}>
+                                {m.suggestedQuantity} × Ksh {m.item.unitPrice} • {m.item.quantity} in stock
+                            </Text>
+                        </View>
+                        <ArrowUpRight size={18} color={Colors.primary} />
+                    </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                    style={[styles.dismissBtn, { marginTop: Spacing.sm }]}
+                    onPress={handleDismissMatch}
+                >
+                    <XCircle size={16} color={Colors.textSecondary} />
+                    <Text style={styles.dismissText}>None of these</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    };
+
+    // Render confirmed linked inventory
+    const renderLinkedInventory = () => {
+        if (!localTransaction.linkedInventoryId) return null;
+
+        return (
+            <View style={[styles.section, styles.inventorySection]}>
+                <View style={styles.sectionHeader}>
+                    <Package size={18} color={Colors.success} />
+                    <Text style={[styles.sectionTitle, { marginLeft: 8 }]}>Linked Inventory</Text>
+                </View>
+                <View style={styles.card}>
+                    <View style={styles.detailRow}>
+                        <Text style={styles.detailLabel}>Item</Text>
+                        <Text style={styles.detailValue}>{localTransaction.linkedInventoryName}</Text>
+                    </View>
+                    {localTransaction.saleQuantity && (
+                        <View style={styles.detailRow}>
+                            <Text style={styles.detailLabel}>Quantity</Text>
+                            <Text style={styles.detailValue}>{localTransaction.saleQuantity} units</Text>
+                        </View>
+                    )}
+                    <View style={styles.detailRow}>
+                        <Text style={styles.detailLabel}>Stock Updated</Text>
+                        <Text style={[styles.detailValue, { color: Colors.success }]}>
+                            {localTransaction.stockDeducted ? '✓ Yes' : '✗ No'}
+                        </Text>
+                    </View>
+                </View>
+            </View>
+        );
+    };
 
     const handleDelete = () => {
         Alert.alert(
@@ -23,10 +205,9 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            const data = await AsyncStorage.getItem('transactions');
-                            const transactions = data ? JSON.parse(data) : [];
-                            const updated = transactions.filter(t => t.id !== transaction.id);
-                            await AsyncStorage.setItem('transactions', JSON.stringify(updated));
+                            const allTransactions = await TransactionStorage.loadTransactions();
+                            const updated = allTransactions.filter(t => t.id !== localTransaction.id);
+                            await TransactionStorage.saveTransactions(updated);
                             Alert.alert('Deleted', 'Transaction removed', [
                                 { text: 'OK', onPress: () => navigation.goBack() }
                             ]);
@@ -72,15 +253,22 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     {isIncoming ? 'Received' : 'Sent'}
                 </Text>
                 <Text style={[styles.amountValue, { color: isIncoming ? Colors.success : Colors.error }]}>
-                    {isIncoming ? '+' : '-'} KSh {Math.abs(Number(transaction.amount) || 0).toLocaleString()}
+                    {isIncoming ? '+' : '-'} KSh {Math.abs(Number(localTransaction.amount) || 0).toLocaleString()}
                 </Text>
-                {transaction.isBusinessTransaction && (
+                {localTransaction.isBusinessTransaction && (
                     <View style={styles.businessBadge}>
                         <TrendingUp size={14} color={Colors.primary} />
                         <Text style={styles.businessBadgeText}>Business Transaction</Text>
                     </View>
                 )}
             </View>
+
+            {/* NEW: Match Suggestions (show before other details) */}
+            {renderSingleMatchSuggestion()}
+            {renderMultipleMatchSuggestion()}
+
+            {/* NEW: Linked Inventory (after confirmation) */}
+            {renderLinkedInventory()}
 
             {/* Transaction Details */}
             <View style={styles.section}>
@@ -89,17 +277,17 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     <DetailRow
                         icon={User}
                         label="From/To"
-                        value={transaction.sender || transaction.from || 'Unknown'}
+                        value={localTransaction.sender || localTransaction.from || 'Unknown'}
                     />
                     <DetailRow
                         icon={Building2}
                         label="Bank/Source"
-                        value={transaction.bank || 'Manual Entry'}
+                        value={localTransaction.bank || 'Manual Entry'}
                     />
                     <DetailRow
                         icon={Calendar}
                         label="Date"
-                        value={new Date(transaction.timestamp || transaction.date).toLocaleDateString('en-US', {
+                        value={new Date(localTransaction.timestamp || localTransaction.date).toLocaleDateString('en-US', {
                             weekday: 'long',
                             year: 'numeric',
                             month: 'long',
@@ -109,7 +297,7 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     <DetailRow
                         icon={Clock}
                         label="Time"
-                        value={new Date(transaction.timestamp || transaction.date).toLocaleTimeString('en-US', {
+                        value={new Date(localTransaction.timestamp || localTransaction.date).toLocaleTimeString('en-US', {
                             hour: '2-digit',
                             minute: '2-digit',
                             second: '2-digit'
@@ -118,78 +306,50 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     <DetailRow
                         icon={Hash}
                         label="Transaction ID"
-                        value={transaction.id || 'N/A'}
+                        value={localTransaction.id || 'N/A'}
                     />
                     <DetailRow
                         icon={Tag}
                         label="Source"
-                        value={transaction.isManual ? 'Manual Entry' : 'SMS Parsed'}
-                        color={transaction.isManual ? '#f59e0b' : '#06b6d4'}
+                        value={localTransaction.isManual ? 'Manual Entry' : 'SMS Parsed'}
+                        color={localTransaction.isManual ? '#f59e0b' : '#06b6d4'}
                     />
                 </View>
             </View>
 
             {/* Message/Description */}
-            {transaction.message && (
+            {localTransaction.message && (
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Description</Text>
                     <View style={styles.card}>
                         <View style={styles.messageContainer}>
                             <MessageSquare size={18} color={Colors.textSecondary} style={{ marginRight: 10 }} />
-                            <Text style={styles.messageText}>{transaction.message}</Text>
+                            <Text style={styles.messageText}>{localTransaction.message}</Text>
                         </View>
                     </View>
                 </View>
             )}
 
             {/* Business Score */}
-            {transaction.score !== undefined && (
+            {localTransaction.score !== undefined && (
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Business Score</Text>
                     <View style={styles.card}>
                         <View style={styles.scoreContainer}>
                             <View style={styles.scoreCircle}>
-                                <Text style={styles.scoreValue}>{transaction.score}</Text>
+                                <Text style={styles.scoreValue}>{localTransaction.score}</Text>
                                 <Text style={styles.scoreLabel}>/ 100</Text>
                             </View>
                             <View style={styles.scoreInfo}>
                                 <Text style={styles.scoreTitle}>
-                                    {transaction.score >= 70 ? 'High Confidence' :
-                                        transaction.score >= 40 ? 'Medium Confidence' : 'Low Confidence'}
+                                    {localTransaction.score >= 70 ? 'High Confidence' :
+                                        localTransaction.score >= 40 ? 'Medium Confidence' : 'Low Confidence'}
                                 </Text>
                                 <Text style={styles.scoreSubtitle}>
-                                    {transaction.score >= 70 ? 'Likely a business transaction' :
-                                        transaction.score >= 40 ? 'Possibly a business transaction' : 'Likely a personal transaction'}
+                                    {localTransaction.score >= 70 ? 'Likely a business transaction' :
+                                        localTransaction.score >= 40 ? 'Possibly a business transaction' : 'Likely a personal transaction'}
                                 </Text>
                             </View>
-                        </View>
-                    </View>
-                </View>
-            )}
-
-            {/* NEW: Show linked inventory item */}
-            {transaction.linkedInventoryId && (
-                <View style={[styles.section, styles.inventorySection]}>
-                    <View style={styles.sectionHeader}>
-                        <Package size={18} color={Colors.primary} />
-                        <Text style={styles.sectionTitle}>Linked Inventory</Text>
-                    </View>
-                    <View style={styles.inventoryDetails}>
-                        <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Item:</Text>
-                            <Text style={styles.detailValue}>{transaction.linkedInventoryName}</Text>
-                        </View>
-                        {transaction.saleQuantity && (
-                            <View style={styles.detailRow}>
-                                <Text style={styles.detailLabel}>Quantity:</Text>
-                                <Text style={styles.detailValue}>{transaction.saleQuantity} units</Text>
-                            </View>
-                        )}
-                        <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Stock Updated:</Text>
-                            <Text style={[styles.detailValue, { color: Colors.success }]}>
-                                {transaction.stockDeducted ? '✓ Yes' : '✗ No'}
-                            </Text>
                         </View>
                     </View>
                 </View>
@@ -244,6 +404,11 @@ const styles = StyleSheet.create({
     },
     businessBadgeText: { ...Typography.caption, color: Colors.primary, fontWeight: '600' },
     section: { padding: Spacing.md },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: Spacing.sm,
+    },
     sectionTitle: { ...Typography.subheading, color: Colors.text, marginBottom: Spacing.sm },
     card: { backgroundColor: Colors.surface, borderRadius: BorderRadius.md, padding: Spacing.md, ...Shadows.sm },
     detailRow: {
@@ -273,14 +438,118 @@ const styles = StyleSheet.create({
     scoreInfo: { flex: 1 },
     scoreTitle: { ...Typography.body, color: Colors.text, fontWeight: '600', marginBottom: 4 },
     scoreSubtitle: { ...Typography.caption, color: Colors.textSecondary },
-    inventorySection: {
-        backgroundColor: Colors.primaryLight,
-        borderLeftWidth: 3,
+
+    // NEW: Match suggestion styles
+    suggestionCard: {
+        backgroundColor: '#fefce8',
+        borderLeftWidth: 4,
         borderLeftColor: Colors.primary,
+        borderRadius: BorderRadius.md,
+        padding: Spacing.md,
+        marginHorizontal: Spacing.md,
+        marginBottom: Spacing.sm,
+        ...Shadows.sm,
     },
-    inventoryDetails: {
-        marginTop: Spacing.sm,
+    suggestionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: Spacing.xs,
+    },
+    suggestionTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    suggestionSubtitle: {
+        fontSize: 13,
+        color: Colors.textSecondary,
+        marginBottom: Spacing.sm,
+    },
+    suggestionContent: {
+        marginVertical: Spacing.sm,
+    },
+    suggestionItemName: {
+        fontSize: 17,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 4,
+    },
+    suggestionDetails: {
+        fontSize: 14,
+        color: Colors.textSecondary,
+        marginBottom: 2,
+    },
+    suggestionStock: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        fontStyle: 'italic',
+    },
+    suggestionActions: {
+        flexDirection: 'row',
         gap: Spacing.xs,
+        marginTop: Spacing.sm,
+    },
+    dismissBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: Spacing.sm,
+        borderRadius: BorderRadius.md,
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    dismissText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.textSecondary,
+    },
+    confirmBtn: {
+        flex: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: Spacing.sm,
+        borderRadius: BorderRadius.md,
+        backgroundColor: Colors.primary,
+    },
+    confirmText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.surface,
+    },
+    matchOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: Colors.surface,
+        padding: Spacing.sm,
+        borderRadius: BorderRadius.md,
+        marginBottom: Spacing.xs,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    matchOptionContent: {
+        flex: 1,
+    },
+    matchOptionName: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 2,
+    },
+    matchOptionDetails: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+    },
+    inventorySection: {
+        backgroundColor: '#ecfdf5',
+        borderLeftWidth: 4,
+        borderLeftColor: Colors.success,
     },
 });
 
