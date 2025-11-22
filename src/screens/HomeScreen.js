@@ -27,9 +27,11 @@ import {
   Eye,
   EyeOff,
   Package,
+  AlertTriangle,
 } from 'lucide-react-native';
 import SMSReader from '../services/SMSReader';
 import TransactionStorage from '../utils/TransactionStorage';
+import CreditStorage from '../utils/CreditStorage';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import BankCard from '../components/BankCard';
 import AddCashSaleDialog from '../components/AddCashSaleDialog';
@@ -55,6 +57,7 @@ const HomeScreen = ({ navigation, route }) => {
   const [activeBanks, setActiveBanks] = useState([]);
   const [appState, setAppState] = useState(AppState.currentState);
   const [yesterdayRevenue, setYesterdayRevenue] = useState(0);
+  const [creditStats, setCreditStats] = useState({ outstanding: 0, owingCustomers: 0 });
 
   // Initialize on mount
   useEffect(() => {
@@ -77,6 +80,7 @@ const HomeScreen = ({ navigation, route }) => {
   useFocusEffect(
     useCallback(() => {
       loadStoredTransactions();
+      loadCreditStats();
     }, [])
   );
 
@@ -395,6 +399,11 @@ const HomeScreen = ({ navigation, route }) => {
     setRefreshing(false);
   }, []);
 
+  const loadCreditStats = async () => {
+    const stats = await CreditStorage.getStats();
+    setCreditStats(stats);
+  };
+
   const getBusinessPercentage = () => {
     if (transactionCount === 0) return 0;
     return Math.round((businessTransactionCount / transactionCount) * 100);
@@ -526,13 +535,22 @@ const HomeScreen = ({ navigation, route }) => {
             <Text style={styles.metricValue}>{getBusinessPercentage()}%</Text>
           </TouchableOpacity>
 
-          <View style={styles.metricCard}>
-            <View style={[styles.metricIconContainer, { backgroundColor: '#DBEAFE' }]}>
-              <DollarSign size={20} color="#0284C7" />
+          {/* REPLACED CARD */}
+          <TouchableOpacity
+            style={styles.metricCard}
+            onPress={() => navigation.navigate('CreditManager')}
+          >
+            <View style={[styles.metricIconContainer, { backgroundColor: '#FEF3C7' }]}>
+              <AlertTriangle size={20} color="#F59E0B" />
             </View>
-            <Text style={styles.metricLabel}>Average Transaction</Text>
-            <Text style={styles.metricValue}>Ksh {getAverageTransaction().toLocaleString()}</Text>
-          </View>
+            <Text style={styles.metricLabel}>Credit / Deni</Text>
+            <Text style={styles.metricValue}>
+              Ksh {creditStats.outstanding.toLocaleString()}
+            </Text>
+            <Text style={styles.subMetric}>
+              {creditStats.owingCustomers} customer(s) owing
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Auto Tracking + Cash Sales Cards */}
@@ -607,7 +625,7 @@ const HomeScreen = ({ navigation, route }) => {
             <View style={styles.emptyState}>
               <Text style={styles.emptyStateText}>No transactions yet</Text>
               <Text style={styles.emptyStateSubtext}>
-                Turn on Auto Tracking or add manual sales to get started
+                Turn on SMS Tracking or add manual sales to get started
               </Text>
             </View>
           ) : (
@@ -1079,6 +1097,12 @@ const styles = StyleSheet.create({
   footerText: {
     fontSize: 11,
     color: Colors.textSecondary,
+  },
+  subMetric: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 4,
+    fontWeight: '500',
   },
 });
 

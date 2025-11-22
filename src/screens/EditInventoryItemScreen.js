@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { ArrowLeft, Trash2, Plus, Minus, Calendar } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import InventoryStorage from '../utils/InventoryStorage';
 import { Colors, Spacing, BorderRadius, Typography, Shadows } from '../styles/Theme';
 
@@ -41,6 +42,7 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
     };
 
     const handleSave = async () => {
+        // Validation
         if (!name.trim()) {
             Alert.alert('Required', 'Please enter item name');
             return;
@@ -57,6 +59,10 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
         }
 
         try {
+            console.log('=== SAVE STARTED ===');
+            console.log('Original item ID:', item.id);
+            console.log('Original item:', item);
+
             const updates = {
                 name: name.trim(),
                 category,
@@ -66,18 +72,66 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                 lowStockThreshold: Number(lowStockThreshold) || 5,
             };
 
-            const success = await InventoryStorage.updateItem(item.id, updates);
+            console.log('Updates to apply:', updates);
 
-            if (success) {
-                Alert.alert('Success', 'Item updated successfully', [
-                    { text: 'OK', onPress: () => navigation.goBack() },
-                ]);
-            } else {
-                Alert.alert('Error', 'Failed to update item');
+            // Direct approach: Load all items, find, update, save
+            const allItemsRaw = await AsyncStorage.getItem('@inventory_items');
+            console.log('Raw storage data:', allItemsRaw);
+
+            const allItems = allItemsRaw ? JSON.parse(allItemsRaw) : [];
+            console.log('Parsed items count:', allItems.length);
+            console.log('All item IDs:', allItems.map(i => i.id));
+
+            const index = allItems.findIndex(i => i.id === item.id);
+            console.log('Found at index:', index);
+
+            if (index === -1) {
+                Alert.alert('Error', 'Item not found in storage');
+                console.error('Item ID not found:', item.id);
+                return;
             }
+
+            console.log('Original stored item:', allItems[index]);
+
+            // Update the item
+            allItems[index] = {
+                ...allItems[index],
+                ...updates,
+                updatedAt: new Date().toISOString(),
+            };
+
+            console.log('Updated item:', allItems[index]);
+
+            // Save back to storage
+            await AsyncStorage.setItem('@inventory_items', JSON.stringify(allItems));
+            console.log('✅ Saved to AsyncStorage');
+
+            // Verify save
+            const verification = await AsyncStorage.getItem('@inventory_items');
+            const verifyItems = JSON.parse(verification);
+            const verifyItem = verifyItems.find(i => i.id === item.id);
+            console.log('Verification - item after save:', verifyItem);
+
+            Alert.alert('✅ Saved', 'Changes saved successfully', [
+                {
+                    text: 'OK',
+                    onPress: () => {
+                        // Pass updated item back
+                        navigation.navigate('Inventory', {
+                            refresh: Date.now(),
+                            updatedItem: allItems[index]
+                        });
+                    }
+                }
+            ]);
+
+            console.log('=== SAVE COMPLETED ===');
+
         } catch (error) {
-            console.error('Update error:', error);
-            Alert.alert('Error', 'Failed to update item');
+            console.error('=== SAVE ERROR ===');
+            console.error('Error:', error);
+            console.error('Stack:', error.stack);
+            Alert.alert('Error', 'Failed to save: ' + error.message);
         }
     };
 
@@ -93,7 +147,7 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                     onPress: async () => {
                         const success = await InventoryStorage.deleteItem(item.id);
                         if (success) {
-                            navigation.goBack();
+                            navigation.navigate('Inventory', { refresh: Date.now() });
                         }
                     },
                 },

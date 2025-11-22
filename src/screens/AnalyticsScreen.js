@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Dimensions, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Dimensions, TouchableOpacity, RefreshControl, StatusBar } from 'react-native';
 import TransactionStorage from '../utils/TransactionStorage';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import { ArrowLeft, TrendingUp, TrendingDown, DollarSign, Activity, Calendar } from 'lucide-react-native';
@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 const { width } = Dimensions.get('window');
 
-const AnalyticsScreen = ({ navigation }) => { // change signature to receive navigation
+const AnalyticsScreen = ({ navigation }) => {
   const [stats, setStats] = useState({
     totalRevenue: 0,
     businessRevenue: 0,
@@ -227,147 +227,188 @@ const AnalyticsScreen = ({ navigation }) => { // change signature to receive nav
     : 0;
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.headerRow}>
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
+
+      {/* Themed Header */}
+      <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >
-          <ArrowLeft size={22} color={Colors.text} />
+          <ArrowLeft size={24} color={Colors.surface} />
         </TouchableOpacity>
-        <Text style={styles.screenTitle}>Business Analytics</Text>
+        <Text style={styles.title}>Analytics</Text>
+        <View style={styles.placeholder} />
       </View>
 
-    
+      <ScrollView
+        style={styles.scrollView}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[Colors.primary]}
+            tintColor={Colors.primary}
+          />
+        }
+      >
+        {/* Growth Card */}
+        <View style={styles.growthCard}>
+          <View style={styles.growthHeader}>
+            {stats.growthRate >= 0 ? (
+              <TrendingUp size={24} color={Colors.success} />
+            ) : (
+              <TrendingDown size={24} color={Colors.error} />
+            )}
+            <Text style={styles.growthLabel}>7-Day Growth</Text>
+          </View>
+          <Text style={[styles.growthValue, { color: stats.growthRate >= 0 ? Colors.success : Colors.error }]}>
+            {stats.growthRate >= 0 ? '+' : ''}{stats.growthRate.toFixed(1)}%
+          </Text>
+          <Text style={styles.growthSubtitle}>
+            Compared to previous week
+          </Text>
+        </View>
 
-      {/* Growth Card */}
-      <View style={styles.growthCard}>
-        <View style={styles.growthHeader}>
-          {stats.growthRate >= 0 ? (
-            <TrendingUp size={24} color={Colors.success} />
+        {/* Revenue Chart Card */}
+        <View style={styles.chartCard}>
+          <View style={styles.chartHeader}>
+            <View>
+              <Text style={styles.chartTitle}>Revenue Trend</Text>
+              <Text style={styles.chartSubtitle}>Business income only</Text>
+            </View>
+          </View>
+
+          {/* Period Toggle */}
+          <View style={styles.periodToggle}>
+            <TouchableOpacity
+              style={[styles.periodButton, chartPeriod === 'day' && styles.periodButtonActive]}
+              onPress={() => setChartPeriod('day')}
+            >
+              <Text style={[styles.periodButtonText, chartPeriod === 'day' && styles.periodButtonTextActive]}>
+                Day
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.periodButton, chartPeriod === 'week' && styles.periodButtonActive]}
+              onPress={() => setChartPeriod('week')}
+            >
+              <Text style={[styles.periodButtonText, chartPeriod === 'week' && styles.periodButtonTextActive]}>
+                Week
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.periodButton, chartPeriod === 'month' && styles.periodButtonActive]}
+              onPress={() => setChartPeriod('month')}
+            >
+              <Text style={[styles.periodButtonText, chartPeriod === 'month' && styles.periodButtonTextActive]}>
+                Month
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Bar Chart */}
+          {chartData.length > 0 ? (
+            <BarChart data={chartData} maxValue={maxChartValue} period={chartPeriod} />
           ) : (
-            <TrendingDown size={24} color={Colors.error} />
+            <View style={styles.emptyChart}>
+              <Text style={styles.emptyChartText}>No data available</Text>
+              <Text style={styles.emptyChartSubtext}>Scan SMS or add transactions to see charts</Text>
+            </View>
           )}
-          <Text style={styles.growthLabel}>7-Day Growth</Text>
-        </View>
-        <Text style={[styles.growthValue, { color: stats.growthRate >= 0 ? Colors.success : Colors.error }]}>
-          {stats.growthRate >= 0 ? '+' : ''}{stats.growthRate.toFixed(1)}%
-        </Text>
-        <Text style={styles.growthSubtitle}>
-          Compared to previous week
-        </Text>
-      </View>
-
-      {/* Revenue Chart Card */}
-      <View style={styles.chartCard}>
-        <View style={styles.chartHeader}>
-          <View>
-            <Text style={styles.chartTitle}>Revenue Trend</Text>
-            <Text style={styles.chartSubtitle}>Business income only</Text>
-          </View>
         </View>
 
-        {/* Period Toggle */}
-        <View style={styles.periodToggle}>
-          <TouchableOpacity
-            style={[styles.periodButton, chartPeriod === 'day' && styles.periodButtonActive]}
-            onPress={() => setChartPeriod('day')}
-          >
-            <Text style={[styles.periodButtonText, chartPeriod === 'day' && styles.periodButtonTextActive]}>
-              Day
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.periodButton, chartPeriod === 'week' && styles.periodButtonActive]}
-            onPress={() => setChartPeriod('week')}
-          >
-            <Text style={[styles.periodButtonText, chartPeriod === 'week' && styles.periodButtonTextActive]}>
-              Week
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.periodButton, chartPeriod === 'month' && styles.periodButtonActive]}
-            onPress={() => setChartPeriod('month')}
-          >
-            <Text style={[styles.periodButtonText, chartPeriod === 'month' && styles.periodButtonTextActive]}>
-              Month
-            </Text>
-          </TouchableOpacity>
+        {/* Revenue Stats */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Revenue Overview</Text>
+          <StatCard
+            icon={DollarSign}
+            label="Total Revenue"
+            value={`Ksh ${stats.totalRevenue.toLocaleString()}`}
+            color={Colors.primary}
+            subtitle="All incoming transactions"
+          />
+          <StatCard
+            icon={TrendingUp}
+            label="Business Revenue"
+            value={`Ksh ${stats.businessRevenue.toLocaleString()}`}
+            color={Colors.success}
+            subtitle={`${businessRate}% of total transactions`}
+          />
+          <StatCard
+            icon={Activity}
+            label="Average Transaction"
+            value={`Ksh ${Math.round(stats.averageTransaction).toLocaleString()}`}
+            color="#8b5cf6"
+            subtitle="Per business transaction"
+          />
         </View>
 
-        {/* Bar Chart */}
-        {chartData.length > 0 ? (
-          <BarChart data={chartData} maxValue={maxChartValue} period={chartPeriod} />
-        ) : (
-          <View style={styles.emptyChart}>
-            <Text style={styles.emptyChartText}>No data available</Text>
-            <Text style={styles.emptyChartSubtext}>Scan SMS or add transactions to see charts</Text>
-          </View>
-        )}
-      </View>
+        {/* Transaction Stats */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Transaction Insights</Text>
+          <StatCard
+            icon={Activity}
+            label="Total Transactions"
+            value={stats.transactionCount}
+            color="#06b6d4"
+            subtitle={`${stats.businessCount} business transactions`}
+          />
+          <StatCard
+            icon={Calendar}
+            label="Most Active Bank"
+            value={stats.topBank}
+            color="#f59e0b"
+            subtitle="Highest transaction volume"
+          />
+          <StatCard
+            icon={Calendar}
+            label="Busiest Day"
+            value={stats.topDay}
+            color="#ec4899"
+            subtitle="Most transactions recorded"
+          />
+        </View>
 
-      {/* Revenue Stats */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Revenue Overview</Text>
-        <StatCard
-          icon={DollarSign}
-          label="Total Revenue"
-          value={`Ksh ${stats.totalRevenue.toLocaleString()}`}
-          color={Colors.primary}
-          subtitle="All incoming transactions"
-        />
-        <StatCard
-          icon={TrendingUp}
-          label="Business Revenue"
-          value={`Ksh ${stats.businessRevenue.toLocaleString()}`}
-          color={Colors.success}
-          subtitle={`${businessRate}% of total transactions`}
-        />
-        <StatCard
-          icon={Activity}
-          label="Average Transaction"
-          value={`Ksh ${Math.round(stats.averageTransaction).toLocaleString()}`}
-          color="#8b5cf6"
-          subtitle="Per business transaction"
-        />
-      </View>
-
-      {/* Transaction Stats */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Transaction Insights</Text>
-        <StatCard
-          icon={Activity}
-          label="Total Transactions"
-          value={stats.transactionCount}
-          color="#06b6d4"
-          subtitle={`${stats.businessCount} business transactions`}
-        />
-        <StatCard
-          icon={Calendar}
-          label="Most Active Bank"
-          value={stats.topBank}
-          color="#f59e0b"
-          subtitle="Highest transaction volume"
-        />
-        <StatCard
-          icon={Calendar}
-          label="Busiest Day"
-          value={stats.topDay}
-          color="#ec4899"
-          subtitle="Most transactions recorded"
-        />
-      </View>
-
-      <View style={{ height: 40 }} />
-    </ScrollView>
+        <View style={{ height: 40 }} />
+      </ScrollView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  header: { padding: Spacing.lg, paddingTop: Spacing.xl },
-  title: { ...Typography.title, color: Colors.text, marginBottom: 4 },
-  subtitle: { ...Typography.caption, color: Colors.textSecondary },
+  container: {
+    flex: 1,
+    backgroundColor: Colors.background
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.md,
+    justifyContent: 'space-between',
+    backgroundColor: Colors.primary,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.surface,
+    flex: 1,
+    textAlign: 'center',
+  },
+  placeholder: {
+    width: 40,
+  },
+  scrollView: {
+    flex: 1,
+  },
   growthCard: {
     margin: Spacing.md,
     padding: Spacing.lg,
@@ -376,10 +417,27 @@ const styles = StyleSheet.create({
     ...Shadows.md,
     alignItems: 'center',
   },
-  growthHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  growthLabel: { ...Typography.body, color: Colors.textSecondary, fontWeight: '600' },
-  growthValue: { ...Typography.title, fontSize: 48, fontWeight: '800', marginBottom: 4 },
-  growthSubtitle: { ...Typography.caption, color: Colors.textSecondary },
+  growthHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12
+  },
+  growthLabel: {
+    ...Typography.body,
+    color: Colors.textSecondary,
+    fontWeight: '600'
+  },
+  growthValue: {
+    ...Typography.title,
+    fontSize: 48,
+    fontWeight: '800',
+    marginBottom: 4
+  },
+  growthSubtitle: {
+    ...Typography.caption,
+    color: Colors.textSecondary
+  },
   chartCard: {
     margin: Spacing.md,
     marginTop: 0,
@@ -394,8 +452,16 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: Spacing.md,
   },
-  chartTitle: { ...Typography.subheading, color: Colors.text, fontWeight: '700' },
-  chartSubtitle: { ...Typography.caption, color: Colors.textSecondary, marginTop: 2 },
+  chartTitle: {
+    ...Typography.subheading,
+    color: Colors.text,
+    fontWeight: '700'
+  },
+  chartSubtitle: {
+    ...Typography.caption,
+    color: Colors.textSecondary,
+    marginTop: 2
+  },
   periodToggle: {
     flexDirection: 'row',
     backgroundColor: Colors.background,
@@ -434,8 +500,14 @@ const styles = StyleSheet.create({
     ...Typography.caption,
     color: Colors.textSecondary,
   },
-  section: { padding: Spacing.md },
-  sectionTitle: { ...Typography.subheading, color: Colors.text, marginBottom: Spacing.sm },
+  section: {
+    padding: Spacing.md
+  },
+  sectionTitle: {
+    ...Typography.subheading,
+    color: Colors.text,
+    marginBottom: Spacing.sm
+  },
   statCard: {
     backgroundColor: Colors.surface,
     padding: Spacing.md,
@@ -443,32 +515,28 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
     ...Shadows.sm,
   },
-  statHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  statLabel: { ...Typography.caption, color: Colors.textSecondary, fontWeight: '600', textTransform: 'uppercase' },
-  statValue: { ...Typography.title, color: Colors.text, fontSize: 24, fontWeight: '700', marginBottom: 4 },
-  statSubtitle: { ...Typography.caption, color: Colors.textSecondary },
-  headerRow: {
+  statHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.lg,
-    marginBottom: Spacing.sm,
+    gap: 8,
+    marginBottom: 8
   },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: Colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
-    marginRight: Spacing.md
+  statLabel: {
+    ...Typography.caption,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+    textTransform: 'uppercase'
   },
-  screenTitle: {
-    ...Typography.subheading,
+  statValue: {
+    ...Typography.title,
+    color: Colors.text,
+    fontSize: 24,
     fontWeight: '700',
-    color: Colors.text
+    marginBottom: 4
+  },
+  statSubtitle: {
+    ...Typography.caption,
+    color: Colors.textSecondary
   },
 });
 

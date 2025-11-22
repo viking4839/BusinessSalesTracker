@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -6,73 +6,135 @@ import {
     TouchableOpacity,
     StyleSheet,
     RefreshControl,
+    TextInput,
+    Animated,
+    StatusBar,
 } from 'react-native';
-import { Plus } from 'lucide-react-native';
+import { Plus, Search, X } from 'lucide-react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import AddInventoryItemDialog from '../components/AddInventoryItemDialog';
 import InventoryStorage from '../utils/InventoryStorage';
 import { Colors, Spacing, BorderRadius } from '../styles/Theme';
 
-const InventoryScreen = ({ navigation }) => {
+const InventoryScreen = ({ navigation, route }) => {
     const [inventory, setInventory] = useState([]);
-    const [categories, setCategories] = useState([]);
+    const [categories, setCategories] = useState(['All']);
     const [selectedCategory, setSelectedCategory] = useState('All');
     const [refreshing, setRefreshing] = useState(false);
     const [showAddDialog, setShowAddDialog] = useState(false);
+    const [searchExpanded, setSearchExpanded] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchWidth] = useState(new Animated.Value(40));
 
-    useEffect(() => {
-        loadData();
-    }, []);
+    useFocusEffect(
+        useCallback(() => {
+            console.log('📍 InventoryScreen focused - reloading data');
+            loadAll();
+        }, [])
+    );
 
-    const loadData = async () => {
-        const items = await InventoryStorage.loadInventory();
-        setInventory(items || []);
-        const cats = await InventoryStorage.loadCategories();
-        setCategories(['All', ...(cats || [])]);
+    const loadAll = async () => {
+        try {
+            console.log('🔄 Loading inventory from storage...');
+            const items = await InventoryStorage.loadInventory();
+            console.log('✅ Loaded items:', items.length, items);
+            setInventory(items || []);
+
+            const catList = await InventoryStorage.loadCategories();
+            if (catList && catList.length) {
+                setCategories(['All', ...catList]);
+            }
+        } catch (e) {
+            console.error('❌ Inventory load error', e);
+        }
     };
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
-        loadData().finally(() => setRefreshing(false));
+        loadAll().finally(() => setRefreshing(false));
     }, []);
 
-    const filteredInventory = selectedCategory === 'All'
-        ? inventory
-        : inventory.filter(i => i.category === selectedCategory);
+    const toggleSearch = () => {
+        if (searchExpanded) {
+            Animated.timing(searchWidth, {
+                toValue: 40,
+                duration: 300,
+                useNativeDriver: false,
+            }).start(() => {
+                setSearchExpanded(false);
+                setSearchQuery('');
+            });
+        } else {
+            setSearchExpanded(true);
+            Animated.timing(searchWidth, {
+                toValue: 250,
+                duration: 300,
+                useNativeDriver: false,
+            }).start();
+        }
+    };
+
+    const filteredInventory = inventory.filter(item => {
+        const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
+        const matchesSearch = !searchQuery || 
+            item.name.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesCategory && matchesSearch;
+    });
 
     const handleItemAdded = () => {
-        loadData();
+        loadAll();
     };
 
     const handleDeleteItem = async (item) => {
-        // simple long‑press delete (optional)
         await InventoryStorage.deleteItem(item.id);
-        loadData();
+        loadAll();
     };
 
-    const renderItem = ({ item }) => {
+    const renderAddCard = () => (
+        <TouchableOpacity
+            style={[styles.gridCard, styles.addCard]}
+            activeOpacity={0.85}
+            onPress={() => setShowAddDialog(true)}
+        >
+            <View style={styles.addCardContent}>
+                <View style={styles.addIconCircle}>
+                    <Plus size={32} color={Colors.primary} strokeWidth={2.5} />
+                </View>
+                <Text style={styles.addCardText}>Add Stock</Text>
+            </View>
+        </TouchableOpacity>
+    );
+
+    const renderGridItem = ({ item, index }) => {
+        if (index === 0) {
+            return renderAddCard();
+        }
+
+        const actualItem = filteredInventory[index - 1];
+        
         return (
             <TouchableOpacity
                 style={styles.gridCard}
                 activeOpacity={0.85}
-                onPress={() => navigation.navigate('EditInventoryItem', { item })}
-                onLongPress={() => handleDeleteItem(item)}
+                onPress={() => navigation.navigate('EditInventoryItem', { item: actualItem })}
+                onLongPress={() => handleDeleteItem(actualItem)}
             >
-                <Text numberOfLines={2} style={styles.gridName}>{item.name}</Text>
+                <Text numberOfLines={2} style={styles.gridName}>{actualItem.name}</Text>
 
                 <View style={styles.gridRow}>
                     <Text style={styles.gridLabel}>Qty</Text>
-                    <Text style={styles.gridValue}>{item.quantity}</Text>
+                    <Text style={styles.gridValue}>{actualItem.quantity}</Text>
                 </View>
                 <View style={styles.gridRow}>
                     <Text style={styles.gridLabel}>Price</Text>
-                    <Text style={styles.gridValue}>Ksh {item.unitPrice}</Text>
+                    <Text style={styles.gridValue}>Ksh {actualItem.unitPrice}</Text>
                 </View>
 
                 <View style={styles.gridFooter}>
-                    <Text style={styles.gridCategory}>{item.category}</Text>
-                    {item.expiryDate && (
+                    <Text style={styles.gridCategory}>{actualItem.category}</Text>
+                    {actualItem.expiryDate && (
                         <Text style={styles.gridExpiry}>
-                            {new Date(item.expiryDate).toLocaleDateString()}
+                            {new Date(actualItem.expiryDate).toLocaleDateString()}
                         </Text>
                     )}
                 </View>
@@ -81,25 +143,48 @@ const InventoryScreen = ({ navigation }) => {
     };
 
     const renderEmpty = () => (
-        <View style={styles.emptyBox}>
-            <Text style={styles.emptyText}>No items</Text>
+        <View style={styles.emptyContainer}>
+            {renderAddCard()}
+            <Text style={styles.emptyText}>No items yet</Text>
+            <Text style={styles.emptySubtext}>Tap "Add Stock" to get started</Text>
         </View>
     );
 
+    const gridData = [{ id: '__add_card__' }, ...filteredInventory];
+
     return (
         <View style={styles.container}>
-            {/* Header / Add button */}
+            <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
+
+            {/* Themed Header */}
             <View style={styles.header}>
                 <Text style={styles.title}>Inventory</Text>
-                <TouchableOpacity
-                    style={styles.addBtn}
-                    onPress={() => setShowAddDialog(true)}
-                >
-                    <Plus size={20} color={Colors.surface} />
-                </TouchableOpacity>
+                
+                <Animated.View style={[styles.searchContainer, { width: searchWidth }]}>
+                    {searchExpanded ? (
+                        <>
+                            <Search size={18} color={Colors.textSecondary} />
+                            <TextInput
+                                style={styles.searchInput}
+                                placeholder="Search items..."
+                                placeholderTextColor={Colors.textLight}
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                autoFocus
+                            />
+                            <TouchableOpacity onPress={toggleSearch}>
+                                <X size={18} color={Colors.textSecondary} />
+                            </TouchableOpacity>
+                        </>
+                    ) : (
+                        <TouchableOpacity style={styles.searchBtn} onPress={toggleSearch}>
+                            <Search size={20} color={Colors.primary} />
+                        </TouchableOpacity>
+                    )}
+                </Animated.View>
             </View>
 
-            {/* Category chips (larger) */}
+            {/* Category chips */}
             <View style={styles.filterContainer}>
                 <FlatList
                     horizontal
@@ -129,9 +214,9 @@ const InventoryScreen = ({ navigation }) => {
 
             {/* Grid list */}
             <FlatList
-                data={filteredInventory}
-                keyExtractor={(item) => item.id}
-                renderItem={renderItem}
+                data={gridData}
+                keyExtractor={(item, idx) => item.id || idx.toString()}
+                renderItem={renderGridItem}
                 numColumns={2}
                 columnWrapperStyle={styles.columnWrapper}
                 contentContainerStyle={styles.gridContainer}
@@ -154,7 +239,6 @@ const InventoryScreen = ({ navigation }) => {
     );
 };
 
-// Styles
 const CARD_MIN_HEIGHT = 118;
 
 const styles = StyleSheet.create({
@@ -167,25 +251,43 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: Spacing.md,
         paddingTop: Spacing.lg,
-        paddingBottom: Spacing.sm,
+        paddingBottom: Spacing.md,
         justifyContent: 'space-between',
+        backgroundColor: Colors.primary,
     },
     title: {
-        fontSize: 20,
+        fontSize: 22,
         fontWeight: '700',
-        color: Colors.text,
+        color: Colors.surface,
     },
-    addBtn: {
-        backgroundColor: Colors.primary,
-        paddingHorizontal: 14,
-        paddingVertical: 10,
+    searchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.md,
+        paddingHorizontal: Spacing.sm,
+        gap: Spacing.xs,
+        height: 40,
+        overflow: 'hidden',
+    },
+    searchBtn: {
+        width: 25,
+        height: 40,
+        backgroundColor: Colors.surface,
         borderRadius: BorderRadius.md,
         justifyContent: 'center',
         alignItems: 'center',
     },
+    searchInput: {
+        flex: 1,
+        fontSize: 14,
+        color: Colors.text,
+        padding: 0,
+    },
     filterContainer: {
         paddingHorizontal: Spacing.md,
-        paddingBottom: Spacing.xs,
+        paddingVertical: Spacing.sm,
+        backgroundColor: Colors.background,
     },
     filterChipLarge: {
         paddingHorizontal: Spacing.lg,
@@ -229,6 +331,32 @@ const styles = StyleSheet.create({
         borderColor: Colors.border,
         minHeight: CARD_MIN_HEIGHT,
     },
+    addCard: {
+        backgroundColor: Colors.surface,
+        borderStyle: 'dashed',
+        borderWidth: 2,
+        borderColor: Colors.primary,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    addCardContent: {
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    addIconCircle: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: Colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    addCardText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.primary,
+        marginTop: Spacing.xs,
+    },
     gridName: {
         fontSize: 20.5,
         fontWeight: '700',
@@ -266,11 +394,18 @@ const styles = StyleSheet.create({
         fontSize: 10,
         color: Colors.textSecondary,
     },
-    emptyBox: {
+    emptyContainer: {
         paddingTop: Spacing.xl,
         alignItems: 'center',
+        gap: Spacing.md,
     },
     emptyText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.text,
+        marginTop: Spacing.md,
+    },
+    emptySubtext: {
         fontSize: 13,
         color: Colors.textSecondary,
     },

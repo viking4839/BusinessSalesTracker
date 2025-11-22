@@ -4,60 +4,53 @@ const INVENTORY_KEY = '@inventory_items';
 const CATEGORIES_KEY = '@inventory_categories';
 
 class InventoryStorage {
-    // Load all inventory items
-    async loadInventory() {
+    static async loadInventory() {
         try {
             const data = await AsyncStorage.getItem(INVENTORY_KEY);
             return data ? JSON.parse(data) : [];
         } catch (error) {
-            console.error('Load inventory error:', error);
+            console.error('loadInventory error:', error);
             return [];
         }
     }
 
-    // Save inventory items
-    async saveInventory(items) {
+    static async saveInventory(items) {
         try {
             await AsyncStorage.setItem(INVENTORY_KEY, JSON.stringify(items));
             return true;
         } catch (error) {
-            console.error('Save inventory error:', error);
+            console.error('saveInventory error:', error);
             return false;
         }
     }
 
-    // Add new item
-    async addItem(itemData) {
+    static async addItem(item) {
         try {
             const items = await this.loadInventory();
             const newItem = {
+                ...item,
                 id: `inv_${Date.now()}`,
-                name: itemData.name,
-                category: itemData.category || 'Uncategorized',
-                quantity: Number(itemData.quantity) || 0,
-                unitPrice: Number(itemData.unitPrice) || 0,
-                expiryDate: itemData.expiryDate || null,
-                lowStockThreshold: itemData.lowStockThreshold || 5,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
             };
-
             items.push(newItem);
             await this.saveInventory(items);
             return newItem;
         } catch (error) {
-            console.error('Add item error:', error);
+            console.error('addItem error:', error);
             return null;
         }
     }
 
-    // Update existing item
-    async updateItem(itemId, updates) {
+    static async updateItem(itemId, updates) {
         try {
             const items = await this.loadInventory();
             const index = items.findIndex(item => item.id === itemId);
 
-            if (index === -1) return false;
+            if (index === -1) {
+                console.error('Item not found:', itemId);
+                return false;
+            }
 
             items[index] = {
                 ...items[index],
@@ -66,80 +59,103 @@ class InventoryStorage {
             };
 
             await this.saveInventory(items);
+            console.log('✅ Item updated:', items[index]);
             return true;
         } catch (error) {
-            console.error('Update item error:', error);
+            console.error('updateItem error:', error);
             return false;
         }
     }
 
-    // Delete item
-    async deleteItem(itemId) {
+    static async deleteItem(itemId) {
         try {
             const items = await this.loadInventory();
             const filtered = items.filter(item => item.id !== itemId);
             await this.saveInventory(filtered);
             return true;
         } catch (error) {
-            console.error('Delete item error:', error);
+            console.error('deleteItem error:', error);
             return false;
         }
     }
 
-    // Adjust quantity (increase/decrease stock)
-    async adjustQuantity(itemId, changeAmount) {
+    static async adjustQuantity(itemId, delta) {
         try {
             const items = await this.loadInventory();
-            const item = items.find(i => i.id === itemId);
+            const index = items.findIndex(item => item.id === itemId);
 
-            if (!item) return false;
+            if (index === -1) {
+                console.error('Item not found:', itemId);
+                return false;
+            }
 
-            const newQuantity = item.quantity + changeAmount;
-            if (newQuantity < 0) return false; // Can't go negative
+            const newQuantity = items[index].quantity + delta;
 
-            return await this.updateItem(itemId, { quantity: newQuantity });
+            if (newQuantity < 0) {
+                console.error('Cannot have negative quantity');
+                return false;
+            }
+
+            items[index].quantity = newQuantity;
+            items[index].updatedAt = new Date().toISOString();
+
+            await this.saveInventory(items);
+            console.log(`✅ Quantity adjusted: ${items[index].name} (${delta >= 0 ? '+' : ''}${delta}) = ${newQuantity}`);
+            return true;
         } catch (error) {
-            console.error('Adjust quantity error:', error);
+            console.error('adjustQuantity error:', error);
             return false;
         }
     }
 
-    // Load categories
-    async loadCategories() {
+    // ✅ NEW: Load categories
+    static async loadCategories() {
         try {
             const data = await AsyncStorage.getItem(CATEGORIES_KEY);
-            return data ? JSON.parse(data) : ['Drinks', 'Snacks', 'Household', 'Airtime', 'Cosmetics', 'Misc'];
+            if (data) {
+                return JSON.parse(data);
+            }
+
+            // If no categories stored, extract from inventory items
+            const items = await this.loadInventory();
+            const categories = [...new Set(items.map(item => item.category).filter(Boolean))];
+
+            if (categories.length > 0) {
+                await this.saveCategories(categories);
+            }
+
+            return categories;
         } catch (error) {
-            console.error('Load categories error:', error);
-            return ['Drinks', 'Snacks', 'Household', 'Airtime', 'Cosmetics', 'Misc'];
+            console.error('loadCategories error:', error);
+            return [];
         }
     }
 
-    // Add category
-    async addCategory(categoryName) {
+    // ✅ NEW: Save categories
+    static async saveCategories(categories) {
+        try {
+            await AsyncStorage.setItem(CATEGORIES_KEY, JSON.stringify(categories));
+            return true;
+        } catch (error) {
+            console.error('saveCategories error:', error);
+            return false;
+        }
+    }
+
+    // ✅ NEW: Add a new category
+    static async addCategory(categoryName) {
         try {
             const categories = await this.loadCategories();
             if (!categories.includes(categoryName)) {
                 categories.push(categoryName);
-                await AsyncStorage.setItem(CATEGORIES_KEY, JSON.stringify(categories));
+                await this.saveCategories(categories);
             }
             return true;
         } catch (error) {
-            console.error('Add category error:', error);
-            return false;
-        }
-    }
-
-    // Clear all inventory (for testing/debug)
-    async clearInventory() {
-        try {
-            await AsyncStorage.removeItem(INVENTORY_KEY);
-            return true;
-        } catch (error) {
-            console.error('Clear inventory error:', error);
+            console.error('addCategory error:', error);
             return false;
         }
     }
 }
 
-export default new InventoryStorage();
+export default InventoryStorage;

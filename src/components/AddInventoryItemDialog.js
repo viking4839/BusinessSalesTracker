@@ -10,44 +10,82 @@ import {
     Alert,
     Platform,
 } from 'react-native';
-import { X, Package } from 'lucide-react-native';
+import { X, Package, Plus } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import InventoryStorage from '../utils/InventoryStorage';
 import { Colors, Spacing, BorderRadius, Typography, Shadows } from '../styles/Theme';
 
 const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
     const [name, setName] = useState('');
-    const [category, setCategory] = useState('Drinks');
+    const [category, setCategory] = useState('');
     const [quantity, setQuantity] = useState('');
     const [unitPrice, setUnitPrice] = useState('');
     const [expiryDate, setExpiryDate] = useState(null);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [categories, setCategories] = useState([]);
     const [lowStockThreshold, setLowStockThreshold] = useState('5');
+    const [showAddCategory, setShowAddCategory] = useState(false);
+    const [newCategory, setNewCategory] = useState('');
 
     useEffect(() => {
-        loadCategories();
-    }, []);
+        if (visible) {
+            loadCategories();
+        }
+    }, [visible]);
 
     const loadCategories = async () => {
         const cats = await InventoryStorage.loadCategories();
         setCategories(cats);
-        if (cats.length > 0) setCategory(cats[0]);
+        if (cats.length > 0 && !category) {
+            setCategory(cats[0]);
+        }
     };
 
     const resetForm = () => {
         setName('');
-        setCategory(categories[0] || 'Drinks');
+        setCategory(categories[0] || '');
         setQuantity('');
         setUnitPrice('');
         setExpiryDate(null);
         setLowStockThreshold('5');
+        setShowAddCategory(false);
+        setNewCategory('');
+    };
+
+    const handleAddNewCategory = async () => {
+        const trimmed = newCategory.trim();
+        if (!trimmed) {
+            Alert.alert('Required', 'Please enter category name');
+            return;
+        }
+
+        if (categories.includes(trimmed)) {
+            Alert.alert('Exists', 'This category already exists');
+            return;
+        }
+
+        // Add to storage
+        await InventoryStorage.addCategory(trimmed);
+
+        // Update local state
+        const updatedCats = [...categories, trimmed];
+        setCategories(updatedCats);
+        setCategory(trimmed);
+        setNewCategory('');
+        setShowAddCategory(false);
+
+        Alert.alert('✅ Success', `Category "${trimmed}" added`);
     };
 
     const handleAddItem = async () => {
         // Validation
         if (!name.trim()) {
             Alert.alert('Required', 'Please enter item name');
+            return;
+        }
+
+        if (!category) {
+            Alert.alert('Required', 'Please select or add a category');
             return;
         }
 
@@ -74,7 +112,7 @@ const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
             const newItem = await InventoryStorage.addItem(itemData);
 
             if (newItem) {
-                Alert.alert('Success', `${name} added to inventory`);
+                Alert.alert('✅ Success', `${name} added to inventory`);
                 resetForm();
                 onItemAdded && onItemAdded(newItem);
                 onClose();
@@ -131,30 +169,64 @@ const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
 
                         {/* Category */}
                         <View style={styles.inputGroup}>
-                            <Text style={styles.label}>Category</Text>
-                            <View style={styles.categoryContainer}>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                                    {categories.map((cat) => (
-                                        <TouchableOpacity
-                                            key={cat}
-                                            style={[
-                                                styles.categoryChip,
-                                                category === cat && styles.categoryChipActive,
-                                            ]}
-                                            onPress={() => setCategory(cat)}
-                                        >
-                                            <Text
-                                                style={[
-                                                    styles.categoryText,
-                                                    category === cat && styles.categoryTextActive,
-                                                ]}
-                                            >
-                                                {cat}
-                                            </Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </ScrollView>
+                            <View style={styles.labelRow}>
+                                <Text style={styles.label}>Category *</Text>
+                                <TouchableOpacity
+                                    onPress={() => setShowAddCategory(!showAddCategory)}
+                                    style={styles.addCategoryBtn}
+                                >
+                                    <Plus size={14} color={Colors.primary} />
+                                    <Text style={styles.addCategoryText}>
+                                        {showAddCategory ? 'Cancel' : 'New Category'}
+                                    </Text>
+                                </TouchableOpacity>
                             </View>
+
+                            {/* Add New Category Input */}
+                            {showAddCategory && (
+                                <View style={styles.addCategoryContainer}>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Enter new category"
+                                        value={newCategory}
+                                        onChangeText={setNewCategory}
+                                        placeholderTextColor={Colors.textLight}
+                                    />
+                                    <TouchableOpacity
+                                        style={styles.addCategorySubmitBtn}
+                                        onPress={handleAddNewCategory}
+                                    >
+                                        <Text style={styles.addCategorySubmitText}>Add</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+
+                            {/* Existing Categories */}
+                            {!showAddCategory && (
+                                <View style={styles.categoryContainer}>
+                                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                        {categories.map((cat) => (
+                                            <TouchableOpacity
+                                                key={cat}
+                                                style={[
+                                                    styles.categoryChip,
+                                                    category === cat && styles.categoryChipActive,
+                                                ]}
+                                                onPress={() => setCategory(cat)}
+                                            >
+                                                <Text
+                                                    style={[
+                                                        styles.categoryText,
+                                                        category === cat && styles.categoryTextActive,
+                                                    ]}
+                                                >
+                                                    {cat}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </ScrollView>
+                                </View>
+                            )}
                         </View>
 
                         {/* Quantity & Unit Price Row */}
@@ -285,7 +357,7 @@ const styles = StyleSheet.create({
         width: 36,
         height: 36,
         borderRadius: 10,
-        backgroundColor: Colors.primaryLight,
+        backgroundColor: Colors.primary + '15',
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: Spacing.sm,
@@ -304,13 +376,45 @@ const styles = StyleSheet.create({
     inputGroup: {
         marginBottom: Spacing.md,
     },
+    labelRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.xs,
+    },
     label: {
         fontSize: 13,
         fontWeight: '600',
         color: Colors.text,
-        marginBottom: Spacing.xs,
+    },
+    addCategoryBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    addCategoryText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: Colors.primary,
+    },
+    addCategoryContainer: {
+        flexDirection: 'row',
+        gap: Spacing.xs,
+        marginBottom: Spacing.sm,
+    },
+    addCategorySubmitBtn: {
+        backgroundColor: Colors.primary,
+        paddingHorizontal: Spacing.md,
+        borderRadius: BorderRadius.md,
+        justifyContent: 'center',
+    },
+    addCategorySubmitText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.surface,
     },
     input: {
+        flex: 1,
         backgroundColor: Colors.background,
         borderWidth: 1,
         borderColor: Colors.border,

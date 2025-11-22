@@ -24,6 +24,7 @@ import CurrencySettingsScreen from './src/screens/CurrencySettingsScreen';
 import DebugScreen from './src/screens/DebugScreen';
 import InventoryScreen from './src/screens/InventoryScreen';
 import EditInventoryItemScreen from './src/screens/EditInventoryItemScreen';
+import CreditManagerScreen from './src/screens/CreditManagerScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();

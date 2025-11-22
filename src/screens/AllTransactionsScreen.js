@@ -10,29 +10,26 @@ import {
     Modal,
     Pressable,
     Alert,
+    StatusBar,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ArrowDownLeft, ArrowUpRight, Filter, Search, X, Download, Calendar, Package } from 'lucide-react-native'; // ✅ Added Package
+import { ArrowDownLeft, ArrowUpRight, Search, X, Download, Calendar, Package } from 'lucide-react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import PdfExportService from '../services/PdfExportService';
 
-// Rename the class
 class AllTransactionsScreenImpl extends React.PureComponent {
     state = {
         transactions: [],
         refreshing: false,
-        showBusinessOnly: false,
-        // POS features
         searchExpanded: false,
         searchQuery: '',
-        dateFilter: 'today', // today | yesterday | week | month | custom
+        dateFilter: 'today',
         showDatePicker: false,
-        customDays: 7, // for custom quick range (no native picker)
+        customDays: 7,
     };
 
     componentDidMount() {
         this.loadTransactions();
-        // Refresh when screen gains focus (no hooks)
         this.unsubscribeFocus = this.props.navigation?.addListener?.('focus', this.loadTransactions);
     }
 
@@ -87,14 +84,10 @@ class AllTransactionsScreenImpl extends React.PureComponent {
     };
 
     filterTransactions = () => {
-        const { transactions, showBusinessOnly, searchQuery } = this.state;
+        const { transactions, searchQuery } = this.state;
         const { start, end } = this.getDateRange();
 
         let result = transactions;
-
-        if (showBusinessOnly) {
-            result = result.filter(t => t.isBusinessTransaction);
-        }
 
         result = result.filter(t => {
             const txDate = new Date(t.timestamp || t.date);
@@ -164,13 +157,6 @@ class AllTransactionsScreenImpl extends React.PureComponent {
         );
     };
 
-    getDateFilterLabel = () => {
-        const { dateFilter, customDays } = this.state;
-        return dateFilter === 'custom'
-            ? `Last ${customDays} days`
-            : dateFilter.charAt(0).toUpperCase() + dateFilter.slice(1);
-    };
-
     renderSectionHeader = ({ section }) => (
         <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>{section.title}</Text>
@@ -183,7 +169,6 @@ class AllTransactionsScreenImpl extends React.PureComponent {
     renderItem = ({ item }) => {
         const isIn = Number(item.amount) > 0;
 
-        // ✅ Check for inventory match
         const hasMatch = item.inventoryMatch &&
             !item.inventoryMatch.userConfirmed &&
             !item.inventoryMatch.userDismissed;
@@ -194,7 +179,6 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                 onPress={() => this.props.navigation.navigate('TransactionDetails', { transaction: item })}
                 activeOpacity={0.7}
             >
-                {/* ✅ Wrapped icon in container for badge positioning */}
                 <View style={styles.iconWrapper}>
                     <View style={[styles.icon, { backgroundColor: Colors.background }]}>
                         {isIn ? (
@@ -204,7 +188,6 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                         )}
                     </View>
 
-                    {/* ✅ Match Badge */}
                     {hasMatch && (
                         <View style={styles.matchBadge}>
                             <Package size={10} color={Colors.surface} />
@@ -226,7 +209,6 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                                 </View>
                             </>
                         )}
-                        {/* ✅ Show "Match" text badge */}
                         {hasMatch && (
                             <>
                                 <Text style={styles.dot}>•</Text>
@@ -251,7 +233,6 @@ class AllTransactionsScreenImpl extends React.PureComponent {
     render() {
         const {
             refreshing,
-            showBusinessOnly,
             searchExpanded,
             searchQuery,
             dateFilter,
@@ -266,35 +247,34 @@ class AllTransactionsScreenImpl extends React.PureComponent {
 
         return (
             <View style={styles.container}>
-                {/* Header */}
-                <View style={styles.header}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.title}>Transactions</Text>
+                <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
 
-                    </View>
+                {/* Themed Header */}
+                <View style={styles.header}>
+                    <Text style={styles.title}>Transactions</Text>
+
                     <View style={styles.headerActions}>
                         <TouchableOpacity
-                            style={styles.iconBtn}
+                            style={styles.searchBtn}
                             onPress={() => this.setState({ searchExpanded: !searchExpanded })}
                         >
-                            {searchExpanded ? <X size={20} color={Colors.text} /> : <Search size={20} color={Colors.text} />}
+                            {searchExpanded ? (
+                                <X size={20} color={Colors.primary} />
+                            ) : (
+                                <Search size={20} color={Colors.primary} />
+                            )}
                         </TouchableOpacity>
+
                         <TouchableOpacity
-                            style={styles.iconBtn}
-                            onPress={() => this.setState({ showBusinessOnly: !showBusinessOnly })}
-                        >
-                            <Filter size={20} color={showBusinessOnly ? Colors.primary : Colors.text} />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={styles.iconBtn}
+                            style={styles.searchBtn}
                             onPress={() => this.handleExport(filtered)}
                         >
-                            <Download size={20} color={Colors.text} />
+                            <Download size={20} color={Colors.primary} />
                         </TouchableOpacity>
                     </View>
                 </View>
 
-                {/* Search (expandable) */}
+                {/* Search Bar */}
                 {searchExpanded && (
                     <View style={styles.searchBar}>
                         <Search size={16} color={Colors.textSecondary} />
@@ -370,11 +350,10 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                                 Ksh {totals.net.toLocaleString()}
                             </Text>
                         </View>
-
                     </View>
                 </View>
 
-                {/* Custom quick range modal (no native picker) */}
+                {/* Custom Date Range Modal */}
                 <Modal
                     visible={showDatePicker}
                     transparent
@@ -410,7 +389,7 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                     </Pressable>
                 </Modal>
 
-                {/* Grouped list */}
+                {/* Transaction List */}
                 <SectionList
                     sections={sections}
                     keyExtractor={(item, index) => String(item.id || index)}
@@ -447,29 +426,28 @@ const styles = StyleSheet.create({
     header: {
         paddingHorizontal: Spacing.md,
         paddingTop: Spacing.lg,
-        paddingBottom: Spacing.sm,
+        paddingBottom: Spacing.md,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+        backgroundColor: Colors.primary,
     },
-    title: { fontSize: 20, fontWeight: '700', color: Colors.text },
-    subtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+    title: { fontSize: 22, fontWeight: '700', color: Colors.surface },
     headerActions: { flexDirection: 'row', gap: 8 },
-    iconBtn: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
+    searchBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: BorderRadius.md,
         backgroundColor: Colors.surface,
         justifyContent: 'center',
         alignItems: 'center',
-        borderWidth: 1,
-        borderColor: Colors.border,
     },
     searchBar: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: Colors.surface,
         marginHorizontal: Spacing.md,
+        marginTop: Spacing.sm,
         marginBottom: Spacing.sm,
         paddingHorizontal: Spacing.sm,
         paddingVertical: Spacing.xs,
@@ -482,8 +460,9 @@ const styles = StyleSheet.create({
     dateFilters: {
         flexDirection: 'row',
         paddingHorizontal: Spacing.md,
-        paddingBottom: Spacing.sm,
+        paddingVertical: Spacing.sm,
         gap: 6,
+        backgroundColor: Colors.background,
     },
     dateFilterBtn: {
         flexDirection: 'row',
@@ -539,8 +518,6 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.sm,
     },
     sep: { height: 1, backgroundColor: Colors.borderLight, marginLeft: Spacing.md + 32 + 8 },
-
-    // ✅ NEW: Icon wrapper for badge positioning
     iconWrapper: {
         position: 'relative',
         marginRight: Spacing.sm,
@@ -552,7 +529,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    // ✅ NEW: Match badge styles
     matchBadge: {
         position: 'absolute',
         top: -4,
@@ -571,7 +547,6 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 2,
     },
-
     details: { flex: 1, marginRight: Spacing.sm },
     sender: { fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 3 },
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
@@ -606,7 +581,6 @@ const styles = StyleSheet.create({
     datePickerBtnText: { fontSize: 14, fontWeight: '600', color: Colors.surface },
 });
 
-// Replace the export with a safe wrapper
 export default function AllTransactionsScreen(props) {
     return <AllTransactionsScreenImpl {...props} />;
 }
