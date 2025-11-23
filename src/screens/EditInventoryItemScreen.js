@@ -10,7 +10,7 @@ import {
     StatusBar,
     Platform,
 } from 'react-native';
-import { ArrowLeft, Trash2, Plus, Minus, Calendar } from 'lucide-react-native';
+import { ArrowLeft, Trash2, Plus, Minus, Calendar, TrendingUp } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import InventoryStorage from '../utils/InventoryStorage';
@@ -23,6 +23,8 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
     const [category, setCategory] = useState(item.category);
     const [quantity, setQuantity] = useState(String(item.quantity));
     const [unitPrice, setUnitPrice] = useState(String(item.unitPrice));
+    const [wholesalePrice, setWholesalePrice] = useState(String(item.wholesalePrice || item.unitPrice)); // NEW
+    const [supplier, setSupplier] = useState(item.supplier || ''); // NEW
     const [expiryDate, setExpiryDate] = useState(
         item.expiryDate ? new Date(item.expiryDate) : null
     );
@@ -41,6 +43,22 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
         setCategories(cats);
     };
 
+    // NEW: Profit calculation functions
+    const calculateProfitMargin = () => {
+        if (!unitPrice || !wholesalePrice) return null;
+        const retail = parseFloat(unitPrice);
+        const wholesale = parseFloat(wholesalePrice);
+        if (retail <= wholesale) return 0;
+        return ((retail - wholesale) / retail * 100).toFixed(1);
+    };
+
+    const calculateProfitPerUnit = () => {
+        if (!unitPrice || !wholesalePrice) return null;
+        const retail = parseFloat(unitPrice);
+        const wholesale = parseFloat(wholesalePrice);
+        return (retail - wholesale).toFixed(2);
+    };
+
     const handleSave = async () => {
         // Validation
         if (!name.trim()) {
@@ -54,10 +72,34 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
         }
 
         if (!unitPrice || Number(unitPrice) <= 0) {
-            Alert.alert('Invalid Price', 'Please enter valid unit price');
+            Alert.alert('Invalid Price', 'Please enter valid retail price');
             return;
         }
 
+        if (!wholesalePrice || Number(wholesalePrice) <= 0) {
+            Alert.alert('Invalid Price', 'Please enter valid wholesale price');
+            return;
+        }
+
+        const retail = Number(unitPrice);
+        const wholesale = Number(wholesalePrice);
+        
+        if (wholesale >= retail) {
+            Alert.alert(
+                'Low Profit Margin', 
+                'Wholesale price is higher than retail price. This item will be sold at a loss.',
+                [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Continue Anyway', onPress: () => saveItem(retail, wholesale) }
+                ]
+            );
+            return;
+        }
+
+        saveItem(retail, wholesale);
+    };
+
+    const saveItem = async (retail, wholesale) => {
         try {
             console.log('=== SAVE STARTED ===');
             console.log('Original item ID:', item.id);
@@ -67,7 +109,9 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                 name: name.trim(),
                 category,
                 quantity: Number(quantity),
-                unitPrice: Number(unitPrice),
+                unitPrice: retail,
+                wholesalePrice: wholesale, // NEW
+                supplier: supplier.trim(), // NEW
                 expiryDate: expiryDate ? expiryDate.toISOString() : null,
                 lowStockThreshold: Number(lowStockThreshold) || 5,
             };
@@ -168,6 +212,9 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
         }
     };
 
+    const profitMargin = calculateProfitMargin();
+    const profitPerUnit = calculateProfitPerUnit();
+
     return (
         <View style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
@@ -195,6 +242,18 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                         value={name}
                         onChangeText={setName}
                         placeholder="Item name"
+                        placeholderTextColor={Colors.textLight}
+                    />
+                </View>
+
+                {/* NEW: Supplier */}
+                <View style={styles.section}>
+                    <Text style={styles.label}>Supplier (Optional)</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={supplier}
+                        onChangeText={setSupplier}
+                        placeholder="Supplier name"
                         placeholderTextColor={Colors.textLight}
                     />
                 </View>
@@ -253,17 +312,54 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                     </View>
                 </View>
 
-                {/* Unit Price */}
+                {/* NEW: Prices Row - Wholesale & Retail */}
                 <View style={styles.section}>
-                    <Text style={styles.label}>Unit Price (Ksh)</Text>
-                    <TextInput
-                        style={styles.input}
-                        value={unitPrice}
-                        onChangeText={setUnitPrice}
-                        keyboardType="numeric"
-                        placeholder="0"
-                        placeholderTextColor={Colors.textLight}
-                    />
+                    <Text style={styles.label}>Pricing</Text>
+                    <View style={styles.pricesRow}>
+                        <View style={styles.priceInputContainer}>
+                            <Text style={styles.priceLabel}>Wholesale (Ksh)</Text>
+                            <TextInput
+                                style={styles.priceInput}
+                                value={wholesalePrice}
+                                onChangeText={setWholesalePrice}
+                                keyboardType="numeric"
+                                placeholder="0"
+                                placeholderTextColor={Colors.textLight}
+                            />
+                        </View>
+
+                        <View style={styles.priceInputContainer}>
+                            <Text style={styles.priceLabel}>Retail (Ksh)</Text>
+                            <TextInput
+                                style={styles.priceInput}
+                                value={unitPrice}
+                                onChangeText={setUnitPrice}
+                                keyboardType="numeric"
+                                placeholder="0"
+                                placeholderTextColor={Colors.textLight}
+                            />
+                        </View>
+                    </View>
+
+                    {/* NEW: Profit Preview */}
+                    {profitMargin !== null && profitPerUnit !== null && (
+                        <View style={styles.profitPreview}>
+                            <View style={styles.profitRow}>
+                                <TrendingUp size={14} color={profitMargin > 0 ? Colors.success : Colors.error} />
+                                <Text style={[
+                                    styles.profitText,
+                                    { color: profitMargin > 0 ? Colors.success : Colors.error }
+                                ]}>
+                                    Profit: Ksh {profitPerUnit} per unit ({profitMargin}%)
+                                </Text>
+                            </View>
+                            {quantity && (
+                                <Text style={styles.totalProfitText}>
+                                    Total Potential Profit: Ksh {(Number(quantity) * profitPerUnit).toLocaleString()}
+                                </Text>
+                            )}
+                        </View>
+                    )}
                 </View>
 
                 {/* Low Stock Threshold */}
@@ -379,6 +475,52 @@ const styles = StyleSheet.create({
         padding: Spacing.sm,
         fontSize: 15,
         color: Colors.text,
+    },
+    // NEW: Prices row styles
+    pricesRow: {
+        flexDirection: 'row',
+        gap: Spacing.sm,
+    },
+    priceInputContainer: {
+        flex: 1,
+    },
+    priceLabel: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        marginBottom: 4,
+    },
+    priceInput: {
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: BorderRadius.md,
+        padding: Spacing.sm,
+        fontSize: 15,
+        color: Colors.text,
+    },
+    // NEW: Profit preview styles
+    profitPreview: {
+        marginTop: Spacing.sm,
+        padding: Spacing.sm,
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+        borderWidth: 1,
+        borderColor: Colors.borderLight,
+    },
+    profitRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        marginBottom: 4,
+    },
+    profitText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    totalProfitText: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        fontWeight: '500',
     },
     categoryChip: {
         paddingHorizontal: Spacing.md,

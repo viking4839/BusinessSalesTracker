@@ -25,6 +25,7 @@ import DebugScreen from './src/screens/DebugScreen';
 import InventoryScreen from './src/screens/InventoryScreen';
 import EditInventoryItemScreen from './src/screens/EditInventoryItemScreen';
 import CreditManagerScreen from './src/screens/CreditManagerScreen';
+import ProfitMarginReportScreen from './src/screens/ProfitMarginReportScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -35,6 +36,8 @@ function HomeStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="HomeMain" component={HomeScreen} />
       <Stack.Screen name="AddCashSale" component={AddCashSaleScreen} />
+      <Stack.Screen name="CreditManager" component={CreditManagerScreen} />
+      <Stack.Screen name="ProfitMarginReport" component={ProfitMarginReportScreen} />
       <Stack.Screen name="Settings" component={SettingsStack} />
     </Stack.Navigator>
   );
@@ -118,7 +121,7 @@ function App() {
           component={HomeStack}
           options={{
             tabBarLabel: 'Home',
-            tabBarIcon: ({ color }) => <HomeIcon color={color} size={26} strokeWidth={2.5} />, // Increased from 22
+            tabBarIcon: ({ color }) => <HomeIcon color={color} size={26} strokeWidth={2.5} />,
           }}
         />
         <Tab.Screen
@@ -126,7 +129,7 @@ function App() {
           component={AnalyticsScreen}
           options={{
             tabBarLabel: 'Analytics',
-            tabBarIcon: ({ color }) => <BarChart3 color={color} size={26} strokeWidth={2.5} />, // Increased from 22
+            tabBarIcon: ({ color }) => <BarChart3 color={color} size={26} strokeWidth={2.5} />,
           }}
         />
         <Tab.Screen
@@ -134,7 +137,7 @@ function App() {
           component={InventoryStack}
           options={{
             tabBarLabel: 'Inventory',
-            tabBarIcon: ({ color }) => <Package color={color} size={26} strokeWidth={2.5} />, // Increased from 22
+            tabBarIcon: ({ color }) => <Package color={color} size={26} strokeWidth={2.5} />,
           }}
         />
         <Tab.Screen
@@ -142,7 +145,7 @@ function App() {
           component={TransactionsStack}
           options={{
             tabBarLabel: 'Transactions',
-            tabBarIcon: ({ color }) => <List color={color} size={26} strokeWidth={2.5} />, // Increased from 22
+            tabBarIcon: ({ color }) => <List color={color} size={26} strokeWidth={2.5} />,
           }}
         />
       </Tab.Navigator>

@@ -32,6 +32,7 @@ import {
 import SMSReader from '../services/SMSReader';
 import TransactionStorage from '../utils/TransactionStorage';
 import CreditStorage from '../utils/CreditStorage';
+import ProfitReportStorage from '../utils/ProfitReportStorage'; // Use your actual filename
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import BankCard from '../components/BankCard';
 import AddCashSaleDialog from '../components/AddCashSaleDialog';
@@ -58,6 +59,12 @@ const HomeScreen = ({ navigation, route }) => {
   const [appState, setAppState] = useState(AppState.currentState);
   const [yesterdayRevenue, setYesterdayRevenue] = useState(0);
   const [creditStats, setCreditStats] = useState({ outstanding: 0, owingCustomers: 0 });
+  const [profitStats, setProfitStats] = useState({
+    todayProfit: 0,
+    margin: 0,
+    itemsSold: 0,
+    bestSeller: null
+  });
 
   // Initialize on mount
   useEffect(() => {
@@ -81,6 +88,7 @@ const HomeScreen = ({ navigation, route }) => {
     useCallback(() => {
       loadStoredTransactions();
       loadCreditStats();
+      loadProfitStats(); // <-- Add this
     }, [])
   );
 
@@ -404,6 +412,11 @@ const HomeScreen = ({ navigation, route }) => {
     setCreditStats(stats);
   };
 
+  const loadProfitStats = async () => {
+    const stats = await ProfitReportStorage.getTodaysProfitStats();
+    setProfitStats(stats);
+  };
+
   const getBusinessPercentage = () => {
     if (transactionCount === 0) return 0;
     return Math.round((businessTransactionCount / transactionCount) * 100);
@@ -523,16 +536,23 @@ const HomeScreen = ({ navigation, route }) => {
 
           <TouchableOpacity
             style={styles.metricCard}
-            onPress={() => navigation.navigate('Analytics')}
+            onPress={() => navigation.navigate('ProfitMarginReport')}
           >
-            <View style={[styles.metricIconContainer, { backgroundColor: '#FEE2E2' }]}>
-              <TrendingUp size={20} color="#EF4444" />
+            <View style={[styles.metricIconContainer, { backgroundColor: '#D1FAE5' }]}>
+              <TrendingUp size={20} color="#065F46" />
             </View>
-            <View style={styles.metricHeaderRow}>
-              <Text style={styles.metricLabel}>Business Rate</Text>
-              <Text style={styles.viewLink}>View</Text>
-            </View>
-            <Text style={styles.metricValue}>{getBusinessPercentage()}%</Text>
+            <Text style={styles.metricLabel}>Profit / Margin</Text>
+            <Text style={styles.metricValue}>
+              Ksh {profitStats.todayProfit.toLocaleString()}
+            </Text>
+            <Text style={styles.subMetric}>
+              Margin: {profitStats.margin}% • {profitStats.itemsSold} sold
+            </Text>
+            {profitStats.bestSeller && (
+              <Text style={styles.subMetric}>
+                🏆 {profitStats.bestSeller.name}
+              </Text>
+            )}
           </TouchableOpacity>
 
           {/* REPLACED CARD */}

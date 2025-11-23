@@ -10,7 +10,7 @@ import {
     Alert,
     Platform,
 } from 'react-native';
-import { X, Package, Plus } from 'lucide-react-native';
+import { X, Package, Plus, TrendingUp } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import InventoryStorage from '../utils/InventoryStorage';
 import { Colors, Spacing, BorderRadius, Typography, Shadows } from '../styles/Theme';
@@ -26,6 +26,8 @@ const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
     const [lowStockThreshold, setLowStockThreshold] = useState('5');
     const [showAddCategory, setShowAddCategory] = useState(false);
     const [newCategory, setNewCategory] = useState('');
+    const [wholesalePrice, setWholesalePrice] = useState('');
+    const [supplier, setSupplier] = useState('');
 
     useEffect(() => {
         if (visible) {
@@ -50,6 +52,8 @@ const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
         setLowStockThreshold('5');
         setShowAddCategory(false);
         setNewCategory('');
+        setWholesalePrice(''); // <-- Reset wholesale price
+        setSupplier('');       // <-- Reset supplier
     };
 
     const handleAddNewCategory = async () => {
@@ -105,8 +109,14 @@ const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
                 category,
                 quantity: Number(quantity),
                 unitPrice: Number(unitPrice),
+                wholesalePrice: Number(wholesalePrice),
+                supplier: supplier.trim(),
                 expiryDate: expiryDate ? expiryDate.toISOString() : null,
                 lowStockThreshold: Number(lowStockThreshold) || 5,
+                profitPerUnit: Number(unitPrice) - Number(wholesalePrice),
+                profitMargin: (((Number(unitPrice) - Number(wholesalePrice)) / Number(unitPrice)) * 100).toFixed(1),
+                totalCost: Number(quantity) * Number(wholesalePrice),
+                totalPotentialProfit: Number(quantity) * (Number(unitPrice) - Number(wholesalePrice)),
             };
 
             const newItem = await InventoryStorage.addItem(itemData);
@@ -131,6 +141,24 @@ const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
             setExpiryDate(selectedDate);
         }
     };
+
+    const calculateProfitMargin = () => {
+        if (!unitPrice || !wholesalePrice) return null;
+        const retail = parseFloat(unitPrice);
+        const wholesale = parseFloat(wholesalePrice);
+        if (retail <= wholesale) return 0;
+        return ((retail - wholesale) / retail * 100).toFixed(1);
+    };
+
+    const calculateProfitPerUnit = () => {
+        if (!unitPrice || !wholesalePrice) return null;
+        const retail = parseFloat(unitPrice);
+        const wholesale = parseFloat(wholesalePrice);
+        return (retail - wholesale).toFixed(2);
+    };
+
+    const profitMargin = calculateProfitMargin();
+    const profitPerUnit = calculateProfitPerUnit();
 
     return (
         <Modal
@@ -256,6 +284,31 @@ const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
                             </View>
                         </View>
 
+                        {/* Supplier (Optional) */}
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>Supplier (Optional)</Text>
+                            <TextInput
+                                style={styles.input}
+                                placeholder="e.g., Supplier Name"
+                                value={supplier}
+                                onChangeText={setSupplier}
+                                placeholderTextColor={Colors.textLight}
+                            />
+                        </View>
+
+                        {/* Wholesale Price */}
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>Wholesale Price (Ksh) *</Text>
+                            <TextInput
+                                style={styles.input}
+                                placeholder="0"
+                                value={wholesalePrice}
+                                onChangeText={setWholesalePrice}
+                                keyboardType="numeric"
+                                placeholderTextColor={Colors.textLight}
+                            />
+                        </View>
+
                         {/* Low Stock Threshold */}
                         <View style={styles.inputGroup}>
                             <Text style={styles.label}>Low Stock Alert At</Text>
@@ -303,6 +356,26 @@ const AddInventoryItemDialog = ({ visible, onClose, onItemAdded }) => {
                                 onChange={handleDateChange}
                                 minimumDate={new Date()}
                             />
+                        )}
+
+                        {/* Profit Preview */}
+                        {profitMargin !== null && profitPerUnit !== null && (
+                            <View style={styles.profitPreview}>
+                                <View style={styles.profitRow}>
+                                    <TrendingUp size={14} color={profitMargin > 0 ? Colors.success : Colors.error} />
+                                    <Text style={[
+                                        styles.profitText,
+                                        { color: profitMargin > 0 ? Colors.success : Colors.error }
+                                    ]}>
+                                        Profit: Ksh {profitPerUnit} per unit ({profitMargin}%)
+                                    </Text>
+                                </View>
+                                {quantity && (
+                                    <Text style={styles.totalProfitText}>
+                                        Total Potential Profit: Ksh {(Number(quantity) * profitPerUnit).toLocaleString()}
+                                    </Text>
+                                )}
+                            </View>
                         )}
                     </ScrollView>
 
@@ -505,6 +578,29 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '600',
         color: Colors.surface,
+    },
+    profitPreview: {
+        marginTop: Spacing.sm,
+        padding: Spacing.sm,
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+        borderWidth: 1,
+        borderColor: Colors.borderLight,
+    },
+    profitRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        marginBottom: 4,
+    },
+    profitText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    totalProfitText: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        fontWeight: '500',
     },
 });
 

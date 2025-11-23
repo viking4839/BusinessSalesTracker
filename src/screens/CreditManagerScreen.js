@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, ScrollView } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, ScrollView, Platform, Animated } from 'react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
-import { ArrowLeft, Plus, CheckCircle, AlertTriangle, User, X } from 'lucide-react-native';
+import { ArrowLeft, Plus, CheckCircle, AlertTriangle, User, X, Search } from 'lucide-react-native';
 import CreditStorage from '../utils/CreditStorage';
 import InventoryStorage from '../utils/InventoryStorage';
 
@@ -10,6 +10,35 @@ const CreditManagerScreen = ({ navigation }) => {
     const [showAdd, setShowAdd] = useState(false);
     const [showDetail, setShowDetail] = useState(null);
     const [inventory, setInventory] = useState([]);
+    const [showPartialPay, setShowPartialPay] = useState(false);
+    const [partialAmount, setPartialAmount] = useState('');
+    const [showSearch, setShowSearch] = useState(false);
+    const [searchText, setSearchText] = useState('');
+
+    // new: inline collapsible search
+    const [searchExpanded, setSearchExpanded] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchWidth] = useState(new Animated.Value(40));
+
+    const toggleSearch = () => {
+        if (searchExpanded) {
+            Animated.timing(searchWidth, {
+                toValue: 40,
+                duration: 300,
+                useNativeDriver: false,
+            }).start(() => {
+                setSearchExpanded(false);
+                setSearchQuery('');
+            });
+        } else {
+            setSearchExpanded(true);
+            Animated.timing(searchWidth, {
+                toValue: 160,
+                duration: 300,
+                useNativeDriver: false,
+            }).start();
+        }
+    };
 
     const [form, setForm] = useState({
         customerName: '',
@@ -122,6 +151,16 @@ const CreditManagerScreen = ({ navigation }) => {
         setShowDetail(updated.find(c => c.id === showDetail.id));
     };
 
+    // Filter credits for search
+    const filteredCredits = (searchQuery.trim() || searchText.trim())
+        ? (credits || []).filter(c =>
+            (searchQuery || searchText).toLowerCase()
+                ? (c.customerName.toLowerCase().includes((searchQuery || searchText).toLowerCase()) ||
+                    c.itemName.toLowerCase().includes((searchQuery || searchText).toLowerCase()))
+                : true
+        )
+        : credits;
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
@@ -129,13 +168,35 @@ const CreditManagerScreen = ({ navigation }) => {
                     <ArrowLeft size={24} color={Colors.surface} />
                 </TouchableOpacity>
                 <Text style={styles.title}>Credit Manager</Text>
-                <TouchableOpacity style={styles.addBtn} onPress={() => setShowAdd(true)}>
-                    <Plus size={20} color={Colors.primary} />
-                </TouchableOpacity>
+                <Animated.View style={[styles.searchContainer, { width: searchWidth }]}>
+                    {searchExpanded ? (
+                        <>
+                            <Search size={18} color={Colors.textSecondary} />
+                            <TextInput
+                                style={styles.searchInput}
+                                placeholder="Search credits..."
+                                placeholderTextColor={Colors.textLight}
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                autoFocus
+                            />
+                            <TouchableOpacity
+                                style={styles.closeButton}
+                                onPress={toggleSearch} // This animates and closes the search pill
+                            >
+                                <X size={18} color={Colors.textSecondary} />
+                            </TouchableOpacity>
+                        </>
+                    ) : (
+                        <TouchableOpacity style={styles.searchBtn} onPress={toggleSearch}>
+                            <Search size={20} color={Colors.primary} />
+                        </TouchableOpacity>
+                    )}
+                </Animated.View>
             </View>
 
             <FlatList
-                data={credits}
+                data={filteredCredits}
                 keyExtractor={c => c.id}
                 renderItem={renderCredit}
                 contentContainerStyle={credits.length === 0 && { flexGrow: 1, justifyContent: 'center' }}
@@ -148,76 +209,129 @@ const CreditManagerScreen = ({ navigation }) => {
             />
 
             {/* Add Credit Modal */}
-            <Modal visible={showAdd} animationType="slide">
-                <View style={styles.modal}>
-                    <Text style={styles.modalTitle}>New Credit Entry</Text>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Customer Name"
-                        value={form.customerName}
-                        onChangeText={t => setForm(f => ({ ...f, customerName: t }))}
-                    />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Phone (optional)"
-                        keyboardType="phone-pad"
-                        value={form.phone}
-                        onChangeText={t => setForm(f => ({ ...f, phone: t }))}
-                    />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Item / Product"
-                        value={form.itemName}
-                        onChangeText={t => setForm(f => ({ ...f, itemName: t, inventoryItemId: null }))}
-                    />
-                    <View style={styles.row}>
-                        <TextInput
-                            style={[styles.input, styles.half]}
-                            placeholder="Quantity"
-                            keyboardType="numeric"
-                            value={form.quantity}
-                            onChangeText={t => setForm(f => ({ ...f, quantity: t }))}
-                        />
-                        <TextInput
-                            style={[styles.input, styles.half]}
-                            placeholder="Unit Price"
-                            keyboardType="numeric"
-                            value={form.unitPrice}
-                            onChangeText={t => setForm(f => ({ ...f, unitPrice: t }))}
-                        />
-                    </View>
-                    <TextInput
-                        style={[styles.input, { height: 90 }]}
-                        placeholder="Notes (optional)"
-                        multiline
-                        value={form.notes}
-                        onChangeText={t => setForm(f => ({ ...f, notes: t }))}
-                    />
-                    <View style={styles.inventoryStrip}>
-                        <Text style={styles.invLabel}>Pick from inventory:</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                            {inventory.map(item => (
-                                <TouchableOpacity
-                                    key={item.id}
-                                    style={[
-                                        styles.invChip,
-                                        form.inventoryItemId === item.id && styles.invChipActive
-                                    ]}
-                                    onPress={() => handleSelectInventory(item)}
-                                >
-                                    <Text style={styles.invChipText}>{item.name}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
-                    </View>
+            <Modal
+                visible={showAdd}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => setShowAdd(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        {/* Header */}
+                        <View style={styles.modalHeader}>
+                            <View style={styles.headerLeft}>
+                                <View style={styles.iconContainer}>
+                                    <AlertTriangle size={20} color={Colors.primary} />
+                                </View>
+                                <Text style={styles.modalTitle}>Add Credit Entry</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setShowAdd(false)} style={styles.closeButton}>
+                                <X size={24} color={Colors.text} />
+                            </TouchableOpacity>
+                        </View>
 
-                    <View style={styles.modalActions}>
-                        <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAdd(false)}>
-                            <Text style={styles.cancelText}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.saveBtn} onPress={addCredit}>
-                            <Text style={styles.saveText}>Save</Text>
-                        </TouchableOpacity>
+                        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+                            {/* Form fields */}
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Customer Name *</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Customer Name"
+                                    value={form.customerName}
+                                    onChangeText={t => setForm(f => ({ ...f, customerName: t }))}
+                                    placeholderTextColor={Colors.textLight}
+                                />
+                            </View>
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Phone (optional)</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Phone"
+                                    keyboardType="phone-pad"
+                                    value={form.phone}
+                                    onChangeText={t => setForm(f => ({ ...f, phone: t }))}
+                                    placeholderTextColor={Colors.textLight}
+                                />
+                            </View>
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Item / Product *</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Item / Product"
+                                    value={form.itemName}
+                                    onChangeText={t => setForm(f => ({ ...f, itemName: t, inventoryItemId: null }))}
+                                    placeholderTextColor={Colors.textLight}
+                                />
+                            </View>
+                            <View style={styles.row}>
+                                <View style={[styles.inputGroup, { flex: 1, marginRight: Spacing.sm }]}>
+                                    <Text style={styles.label}>Quantity *</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="0"
+                                        value={form.quantity}
+                                        onChangeText={t => setForm(f => ({ ...f, quantity: t }))}
+                                        keyboardType="numeric"
+                                        placeholderTextColor={Colors.textLight}
+                                    />
+                                </View>
+                                <View style={[styles.inputGroup, { flex: 1 }]}>
+                                    <Text style={styles.label}>Unit Price *</Text>
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="0"
+                                        value={form.unitPrice}
+                                        onChangeText={t => setForm(f => ({ ...f, unitPrice: t }))}
+                                        keyboardType="numeric"
+                                        placeholderTextColor={Colors.textLight}
+                                    />
+                                </View>
+                            </View>
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.label}>Notes (optional)</Text>
+                                <TextInput
+                                    style={[styles.input, { height: 90 }]}
+                                    placeholder="Notes"
+                                    multiline
+                                    value={form.notes}
+                                    onChangeText={t => setForm(f => ({ ...f, notes: t }))}
+                                    placeholderTextColor={Colors.textLight}
+                                />
+                            </View>
+                            <View style={styles.inventoryStrip}>
+                                <Text style={styles.invLabel}>Pick from inventory:</Text>
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                    {inventory.map(item => (
+                                        <TouchableOpacity
+                                            key={item.id}
+                                            style={[
+                                                styles.invChip,
+                                                form.inventoryItemId === item.id && styles.invChipActive
+                                            ]}
+                                            onPress={() => handleSelectInventory(item)}
+                                        >
+                                            <Text style={styles.invChipText}>{item.name}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                            </View>
+                        </ScrollView>
+
+                        {/* Action Buttons */}
+                        <View style={styles.actionButtons}>
+                            <TouchableOpacity
+                                style={[styles.button, styles.cancelButton]}
+                                onPress={() => setShowAdd(false)}
+                            >
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.button, styles.addButton]}
+                                onPress={addCredit}
+                            >
+                                <Text style={styles.addButtonText}>Add Credit</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </Modal>
@@ -255,12 +369,16 @@ const CreditManagerScreen = ({ navigation }) => {
                                     <TouchableOpacity
                                         style={styles.partialBtn}
                                         onPress={() => {
-                                            Alert.prompt('Partial Payment', 'Enter amount paid', async val => {
-                                                if (!val) return;
-                                                const num = Number(val);
-                                                if (isNaN(num) || num <= 0) return;
-                                                await recordPayment(num, 'Partial');
-                                            });
+                                            if (Platform.OS === 'ios') {
+                                                Alert.prompt('Partial Payment', 'Enter amount paid', async val => {
+                                                    if (!val) return;
+                                                    const num = Number(val);
+                                                    if (isNaN(num) || num <= 0) return;
+                                                    await recordPayment(num, 'Partial');
+                                                });
+                                            } else {
+                                                setShowPartialPay(true);
+                                            }
                                         }}
                                     >
                                         <Text style={styles.partialText}>Partial Pay</Text>
@@ -270,10 +388,118 @@ const CreditManagerScreen = ({ navigation }) => {
                                     </TouchableOpacity>
                                 </View>
                             )}
+                            <View style={styles.deleteActions}>
+                                <TouchableOpacity
+                                    style={styles.deleteBtn}
+                                    onPress={() => {
+                                        Alert.alert(
+                                            'Delete Credit',
+                                            'Are you sure you want to delete this credit entry?',
+                                            [
+                                                { text: 'Cancel', style: 'cancel' },
+                                                {
+                                                    text: 'Delete', style: 'destructive', onPress: async () => {
+                                                        await CreditStorage.deleteCredit(showDetail.id);
+                                                        setShowDetail(null);
+                                                        load();
+                                                    }
+                                                }
+                                            ]
+                                        );
+                                    }}
+                                >
+                                    <Text style={styles.deleteText}>Delete Credit</Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
                     )}
                 </View>
             </Modal>
+
+            {/* Partial Payment Modal */}
+            <Modal
+                visible={showPartialPay}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowPartialPay(false)}
+            >
+                <View style={styles.overlay}>
+                    <View style={[styles.detailCard, { padding: 24 }]}>
+                        <Text style={{ fontWeight: '700', fontSize: 16, marginBottom: 12 }}>Partial Payment</Text>
+                        <TextInput
+                            style={[styles.input, { marginBottom: 16 }]}
+                            placeholder="Enter amount"
+                            keyboardType="numeric"
+                            value={partialAmount}
+                            onChangeText={setPartialAmount}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 12 }}>
+                            <TouchableOpacity
+                                style={[styles.button, styles.cancelButton]}
+                                onPress={() => {
+                                    setShowPartialPay(false);
+                                    setPartialAmount('');
+                                }}
+                            >
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.button, styles.addButton]}
+                                onPress={async () => {
+                                    const num = Number(partialAmount);
+                                    if (isNaN(num) || num <= 0) return;
+                                    await recordPayment(num, 'Partial');
+                                    setShowPartialPay(false);
+                                    setPartialAmount('');
+                                }}
+                            >
+                                <Text style={styles.addButtonText}>Pay</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Search Modal */}
+            <Modal
+                visible={showSearch}
+                animationType="fade"
+                transparent
+                onRequestClose={() => setShowSearch(false)}
+            >
+                <View style={styles.overlay}>
+                    <View style={[styles.detailCard, { padding: 24 }]}>
+                        <Text style={{ fontWeight: '700', fontSize: 16, marginBottom: 12 }}>Search Credits</Text>
+                        <TextInput
+                            style={[styles.input, { marginBottom: 16 }]}
+                            placeholder="Search by customer or item"
+                            value={searchText}
+                            onChangeText={setSearchText}
+                            autoFocus
+                        />
+                        <TouchableOpacity
+                            style={[styles.button, styles.cancelButton]}
+                            onPress={() => {
+                                setShowSearch(false);
+                                setSearchText('');
+                            }}
+                        >
+                            <Text style={styles.cancelButtonText}>Close</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Floating Add Button */}
+            <TouchableOpacity
+                style={styles.fab}
+                onPress={() => setShowAdd(true)}
+                activeOpacity={0.8}
+            >
+                <View style={styles.fabCircle}>
+                    <Plus size={28} color={Colors.surface} />
+                </View>
+            </TouchableOpacity>
         </View>
     );
 };
@@ -283,17 +509,35 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: Colors.primary,
         paddingHorizontal: Spacing.md,
         paddingTop: Spacing.lg,
-        paddingBottom: Spacing.md
+        paddingBottom: Spacing.md,
+        justifyContent: 'space-between',
+        backgroundColor: Colors.primary,
     },
     backBtn: { width: 40, height: 40, justifyContent: 'center' },
-    title: { fontSize: 20, fontWeight: '700', color: Colors.surface },
-    addBtn: {
-        width: 40, height: 40, backgroundColor: Colors.surface,
-        borderRadius: BorderRadius.md, justifyContent: 'center', alignItems: 'center'
+    title: {
+        fontSize: 22,
+        fontWeight: '700',
+        color: Colors.surface,
+    },
+    fab: {
+        position: 'absolute',
+        right: Spacing.lg,
+        bottom: Spacing.lg + 10,
+        zIndex: 10,
+    },
+    fabCircle: {
+        backgroundColor: Colors.primary,
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOpacity: 0.2,
+        shadowRadius: 6,
+        elevation: 6,
     },
     creditRow: {
         flexDirection: 'row',
@@ -313,22 +557,66 @@ const styles = StyleSheet.create({
     },
     pendingBadge: { backgroundColor: '#F59E0B' },
     clearedBadge: { backgroundColor: Colors.success },
-    creditName: { fontSize: 13, fontWeight: '600', color: Colors.text },
-    creditItem: { fontSize: 11, color: Colors.textSecondary },
-    creditDate: { fontSize: 10, color: Colors.textLight },
-    creditAmount: { fontSize: 14, fontWeight: '700' },
+    creditName: { fontSize: 16, fontWeight: '600', color: Colors.text },
+    creditItem: { fontSize: 13, color: Colors.textSecondary },
+    creditDate: { fontSize: 12, color: Colors.textLight },
+    creditAmount: { fontSize: 17, fontWeight: '700' },
     empty: { alignItems: 'center', padding: Spacing.lg },
     emptyText: { fontSize: 15, fontWeight: '600', color: Colors.text },
     emptySub: { fontSize: 11, color: Colors.textSecondary },
-    modal: { flex: 1, padding: Spacing.lg, backgroundColor: Colors.surface },
-    modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: Spacing.md },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: Colors.surface,
+        borderTopLeftRadius: BorderRadius.xl,
+        borderTopRightRadius: BorderRadius.xl,
+        maxHeight: '90%',
+        paddingBottom: Platform.OS === 'ios' ? Spacing.xl : Spacing.md,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    headerLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    iconContainer: {
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        backgroundColor: Colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: Spacing.sm,
+    },
+    closeButton: {
+        padding: Spacing.xs,
+    },
+    scrollView: {
+        padding: Spacing.md,
+    },
+    inputGroup: {
+        marginBottom: Spacing.md,
+    },
+    label: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.text,
+    },
     input: {
         backgroundColor: Colors.background,
         borderWidth: 1,
         borderColor: Colors.border,
         borderRadius: BorderRadius.md,
         padding: Spacing.sm,
-        marginBottom: Spacing.sm,
         fontSize: 14,
         color: Colors.text
     },
@@ -350,25 +638,36 @@ const styles = StyleSheet.create({
     },
     invChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
     invChipText: { fontSize: 11, color: Colors.text },
-    modalActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
-    cancelBtn: {
+    actionButtons: {
+        flexDirection: 'row',
+        paddingHorizontal: Spacing.md,
+        paddingTop: Spacing.md,
+        gap: Spacing.sm,
+    },
+    button: {
         flex: 1,
-        backgroundColor: Colors.background,
         paddingVertical: Spacing.md,
         borderRadius: BorderRadius.md,
         alignItems: 'center',
+    },
+    cancelButton: {
+        backgroundColor: Colors.background,
         borderWidth: 1,
-        borderColor: Colors.border
+        borderColor: Colors.border,
     },
-    cancelText: { fontSize: 14, fontWeight: '600', color: Colors.text },
-    saveBtn: {
-        flex: 1,
+    cancelButtonText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.text,
+    },
+    addButton: {
         backgroundColor: Colors.primary,
-        paddingVertical: Spacing.md,
-        borderRadius: BorderRadius.md,
-        alignItems: 'center'
     },
-    saveText: { fontSize: 14, fontWeight: '600', color: Colors.surface },
+    addButtonText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.surface,
+    },
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
@@ -382,25 +681,66 @@ const styles = StyleSheet.create({
     },
     closeX: { position: 'absolute', top: 10, right: 10 },
     detailHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-    detailName: { fontSize: 16, fontWeight: '700', color: Colors.text },
-    detailLine: { fontSize: 12, color: Colors.textSecondary, marginBottom: 4 },
-    detailNotes: { fontSize: 12, color: Colors.text, fontStyle: 'italic', marginVertical: 6 },
-    payHeader: { fontSize: 13, fontWeight: '600', marginTop: Spacing.sm, marginBottom: 4 },
+    detailName: { fontSize: 17, fontWeight: '700', color: Colors.text },
+    detailLine: { fontSize: 14, color: Colors.textSecondary, marginBottom: 4 },
+    detailNotes: { fontSize: 13, color: Colors.text, fontStyle: 'italic', marginVertical: 6 },
+    payHeader: { fontSize: 14, fontWeight: '600', marginTop: Spacing.sm, marginBottom: 4 },
     noPayments: { fontSize: 11, color: Colors.textSecondary },
-    paymentLine: { fontSize: 11, color: Colors.text },
+    paymentLine: { fontSize: 13, color: Colors.text },
     payActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
     partialBtn: {
         flex: 1, backgroundColor: Colors.background,
         paddingVertical: Spacing.sm, borderRadius: BorderRadius.md,
         alignItems: 'center', borderWidth: 1, borderColor: Colors.border
     },
-    partialText: { fontSize: 12, fontWeight: '600', color: Colors.text },
+    partialText: { fontSize: 14, fontWeight: '600', color: Colors.text },
     clearBtn: {
         flex: 1, backgroundColor: Colors.success,
         paddingVertical: Spacing.sm, borderRadius: BorderRadius.md,
         alignItems: 'center'
     },
-    clearText: { fontSize: 12, fontWeight: '600', color: Colors.surface }
+    clearText: { fontSize: 14, fontWeight: '600', color: Colors.surface },
+    deleteActions: {
+        marginTop: Spacing.md,
+        borderTopWidth: 1,
+        borderTopColor: Colors.border,
+        paddingTop: Spacing.md
+    },
+    deleteBtn: {
+        backgroundColor: Colors.error,
+        paddingVertical: Spacing.sm,
+        borderRadius: BorderRadius.md,
+        alignItems: 'center'
+    },
+    deleteText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.surface
+    },
+    searchBtn: {
+        width: 25,
+        height: 40,
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.md,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    searchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.md,
+        paddingHorizontal: Spacing.sm,
+        gap: Spacing.xs,
+        height: 40,
+        overflow: 'hidden',
+    },
+    searchInput: {
+        flex: 1,
+        fontSize: 14,
+        color: Colors.text,
+        padding: 0,
+    }
 });
 
 export default CreditManagerScreen;

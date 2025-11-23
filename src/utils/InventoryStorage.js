@@ -7,9 +7,21 @@ class InventoryStorage {
     static async loadInventory() {
         try {
             const data = await AsyncStorage.getItem(INVENTORY_KEY);
-            return data ? JSON.parse(data) : [];
+            if (data) {
+                return JSON.parse(data);
+            }
+
+            // If no categories stored, extract from inventory items
+            const items = await this.loadInventory();
+            const categories = [...new Set(items.map(item => item.category).filter(Boolean))];
+
+            if (categories.length > 0) {
+                await this.saveCategories(categories);
+            }
+
+            return categories;
         } catch (error) {
-            console.error('loadInventory error:', error);
+            console.error('loadCategories error:', error);
             return [];
         }
     }
@@ -27,9 +39,19 @@ class InventoryStorage {
     static async addItem(item) {
         try {
             const items = await this.loadInventory();
+            const wholesalePrice = item.wholesalePrice || item.unitPrice;
+            const profitPerUnit = item.unitPrice - wholesalePrice;
+            const profitMargin = item.unitPrice > 0 ? (profitPerUnit / item.unitPrice * 100) : 0;
+
             const newItem = {
                 ...item,
                 id: `inv_${Date.now()}`,
+                wholesalePrice: wholesalePrice,
+                profitPerUnit: profitPerUnit,
+                profitMargin: Number(profitMargin.toFixed(1)),
+                totalCost: item.quantity * wholesalePrice,
+                totalPotentialProfit: item.quantity * profitPerUnit,
+                supplier: item.supplier || '',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
             };
@@ -52,9 +74,29 @@ class InventoryStorage {
                 return false;
             }
 
+            let calculatedUpdates = {};
+
+            if (updates.unitPrice !== undefined || updates.wholesalePrice !== undefined || updates.quantity !== undefined) {
+                const unitPrice = updates.unitPrice !== undefined ? updates.unitPrice : items[index].unitPrice;
+                const wholesalePrice = updates.wholesalePrice !== undefined ? updates.wholesalePrice : items[index].wholesalePrice;
+                const quantity = updates.quantity !== undefined ? updates.quantity : items[index].quantity;
+
+                const profitPerUnit = unitPrice - wholesalePrice;
+                const profitMargin = unitPrice > 0 ? (profitPerUnit / unitPrice * 100) : 0;
+
+                calculatedUpdates = {
+                    ...calculatedUpdates,
+                    profitPerUnit: profitPerUnit,
+                    profitMargin: Number(profitMargin.toFixed(1)),
+                    totalCost: quantity * wholesalePrice,
+                    totalPotentialProfit: quantity * profitPerUnit,
+                };
+            }
+
             items[index] = {
                 ...items[index],
                 ...updates,
+                ...calculatedUpdates,
                 updatedAt: new Date().toISOString(),
             };
 
@@ -97,6 +139,8 @@ class InventoryStorage {
             }
 
             items[index].quantity = newQuantity;
+            items[index].totalCost = newQuantity * items[index].wholesalePrice;
+            items[index].totalPotentialProfit = newQuantity * items[index].profitPerUnit;
             items[index].updatedAt = new Date().toISOString();
 
             await this.saveInventory(items);
@@ -154,6 +198,103 @@ class InventoryStorage {
         } catch (error) {
             console.error('addCategory error:', error);
             return false;
+        }
+    }
+
+    // ✅ NEW: Get inventory statistics
+    static async getInventoryStats() {
+        try {
+            const items = await this.loadInventory();
+
+            const totalStockValue = items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+            const totalCostValue = items.reduce((sum, item) => sum + (item.quantity * item.wholesalePrice), 0);
+            const totalPotentialProfit = items.reduce((sum, item) => sum + (item.quantity * (item.unitPrice - item.wholesalePrice)), 0);
+
+            const lowMarginItems = items.filter(item => {
+                const margin = ((item.unitPrice - item.wholesalePrice) / item.unitPrice * 100);
+                return margin < 10 && item.quantity > 0;
+            });
+
+            const bestValueItems = items
+                .filter(item => item.quantity > 0)
+                .sort((a, b) => {
+                    const profitA = a.unitPrice - a.wholesalePrice;
+                    const profitB = b.unitPrice - b.wholesalePrice;
+                    return profitB - profitA;
+                })
+                .slice(0, 5);
+
+            return {
+                totalStockValue,
+                totalCostValue,
+                totalPotentialProfit,
+                lowMarginItems,
+                bestValueItems,
+            };
+        } catch (error) {
+            console.error('getInventoryStats error:', error);
+            return null;
+        }
+    }
+
+    // ✅ NEW: Get items by profitability
+    static async getItemsByProfitability() {
+        try {
+            const items = await this.loadInventory();
+
+            return items
+                .filter(item => item.quantity > 0)
+                .sort((a, b) => {
+                    const profitMarginA = a.profitMargin || 0;
+                    const profitMarginB = b.profitMargin || 0;
+                    return profitMarginB - profitMarginA;
+                });
+        } catch (error) {
+            console.error('getItemsByProfitability error:', error);
+            return [];
+        }
+    }
+
+    // ✅ NEW: Record a sale
+    static async recordSale(itemId, quantitySold, salePrice) {
+        try {
+            const items = await this.loadInventory();
+            const index = items.findIndex(item => item.id === itemId);
+
+            if (index === -1) {
+                console.error('Item not found:', itemId);
+                return null;
+            }
+
+            // Calculate sale details
+            const actualSalePrice = salePrice || items[index].unitPrice;
+            const wholesalePrice = items[index].wholesalePrice;
+            const profitPerUnit = actualSalePrice - wholesalePrice;
+            const totalProfit = profitPerUnit * quantitySold;
+
+            // Update inventory
+            items[index].quantity -= quantitySold;
+            items[index].totalCost = items[index].quantity * wholesalePrice;
+            items[index].totalPotentialProfit = items[index].quantity * items[index].profitPerUnit;
+            items[index].updatedAt = new Date().toISOString();
+
+            await this.saveInventory(items);
+
+            // Return sale data for profit reporting
+            return {
+                itemId,
+                itemName: items[index].name,
+                quantity: quantitySold,
+                retailPrice: actualSalePrice,
+                wholesalePrice: wholesalePrice,
+                profit: totalProfit,
+                profitPerUnit: profitPerUnit,
+                profitMargin: actualSalePrice > 0 ? (profitPerUnit / actualSalePrice * 100) : 0,
+                timestamp: new Date().toISOString()
+            };
+        } catch (error) {
+            console.error('recordSale error:', error);
+            return null;
         }
     }
 }
