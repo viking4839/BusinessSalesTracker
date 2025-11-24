@@ -1,5 +1,7 @@
 // screens/ProfitMarginReportScreen.js
 
+// screens/ProfitMarginReportScreen.js - FULLY FUNCTIONAL VERSION
+
 import React, { useState, useCallback } from 'react';
 import {
     View,
@@ -9,32 +11,36 @@ import {
     StyleSheet,
     RefreshControl,
     StatusBar,
-    SectionList,
     Alert,
+    ActivityIndicator,
 } from 'react-native';
-import { 
-    TrendingUp, 
-    DollarSign, 
-    Package, 
-    Calendar, 
+import {
+    TrendingUp,
+    DollarSign,
+    Package,
+    Calendar,
     BarChart3,
     ArrowLeft,
     Download,
     Share2,
     AlertTriangle,
-    Crown
+    Crown,
+    RefreshCw
 } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import ProfitReportStorage from '../utils/ProfitReportStorage';
 import InventoryStorage from '../utils/InventoryStorage';
+import PDFExport from '../utils/PDFExport';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 
 const ProfitMarginReportScreen = ({ navigation }) => {
     const [todayReport, setTodayReport] = useState(null);
     const [weeklyReports, setWeeklyReports] = useState({});
+    const [monthlyReports, setMonthlyReports] = useState({});
     const [inventoryStats, setInventoryStats] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState('today');
+    const [exporting, setExporting] = useState(false);
 
     useFocusEffect(
         useCallback(() => {
@@ -45,19 +51,125 @@ const ProfitMarginReportScreen = ({ navigation }) => {
     const loadData = async () => {
         setRefreshing(true);
         try {
+            console.log('🔄 Loading profit report data...');
+
+            // Load today's report
             const today = new Date().toISOString().split('T')[0];
             const report = await ProfitReportStorage.loadReport(today);
             setTodayReport(report);
+            console.log('✅ Today report:', report);
 
+            // Load weekly reports
             const weekly = await ProfitReportStorage.getWeeklyReports();
             setWeeklyReports(weekly);
+            console.log('✅ Weekly reports:', Object.keys(weekly).length);
 
+            // Load monthly reports  
+            const monthly = await ProfitReportStorage.getMonthlyReports();
+            setMonthlyReports(monthly);
+
+            // Load inventory stats
             const stats = await InventoryStorage.getInventoryStats();
             setInventoryStats(stats);
+            console.log('✅ Inventory stats:', stats);
+
         } catch (error) {
-            console.error('Error loading profit data:', error);
+            console.error('❌ Error loading profit data:', error);
+            Alert.alert('Error', 'Failed to load profit data');
         } finally {
             setRefreshing(false);
+        }
+    };
+
+    const handleManualRefresh = async () => {
+        setRefreshing(true);
+        try {
+            // Force regenerate today's report
+            const freshReport = await ProfitReportStorage.refreshTodaysReport();
+            setTodayReport(freshReport);
+
+            // Reload other data
+            await loadData();
+
+            Alert.alert('✅ Refreshed', 'Profit report updated with latest transactions');
+        } catch (error) {
+            console.error('Refresh error:', error);
+            Alert.alert('Error', 'Failed to refresh data');
+        } finally {
+            setRefreshing(false);
+        }
+    };
+
+    const handleExport = async () => {
+        setExporting(true);
+        try {
+            // Check if there's data to export
+            if (activeTab === 'today' && (!todayReport || Object.keys(todayReport).length === 0)) {
+                Alert.alert('No Data', 'There is no profit data to export for today.');
+                return;
+            } else if (activeTab === 'weekly' && Object.keys(weeklyReports).length === 0) {
+                Alert.alert('No Data', 'There is no weekly data to export.');
+                return;
+            }
+
+            if (activeTab === 'today') {
+                await PDFExport.generateProfitReportPDF(todayReport, inventoryStats);
+            } else if (activeTab === 'weekly') {
+                await PDFExport.exportWeeklyReport(weeklyReports);
+            } else {
+                // For insights tab, use today's report
+                await PDFExport.generateProfitReportPDF(todayReport, inventoryStats);
+            }
+            // Success handled by share dialog
+        } catch (error) {
+            console.error('Export error:', error);
+
+            if (error.message && error.message.includes('Failed to generate report')) {
+                Alert.alert(
+                    'Export Failed',
+                    'Could not generate the report. Please try again.',
+                    [{ text: 'OK' }]
+                );
+            } else if (error.message && error.message.includes('User did not share')) {
+                // User cancelled the share - no need to show error
+                console.log('User cancelled share');
+            } else {
+                Alert.alert(
+                    'Export Failed',
+                    error.message || 'An unexpected error occurred'
+                );
+            }
+        } finally {
+            setExporting(false);
+        }
+    };
+
+    const handleShare = async () => {
+        try {
+            let shareMessage = '';
+
+            if (activeTab === 'today' && todayReport) {
+                shareMessage = `🏪 Today's Profit Report:\n` +
+                    `Sales: Ksh ${todayReport.totalSales?.toLocaleString()}\n` +
+                    `Profit: Ksh ${todayReport.totalProfit?.toLocaleString()}\n` +
+                    `Margin: ${todayReport.margin}%\n` +
+                    `Transactions: ${todayReport.transactionCount}`;
+            } else if (activeTab === 'weekly') {
+                const weekProfit = Object.values(weeklyReports).reduce((sum, report) => sum + report.totalProfit, 0);
+                shareMessage = `🏪 Weekly Profit Report:\n` +
+                    `Total Profit: Ksh ${weekProfit.toLocaleString()}\n` +
+                    `Days: ${Object.keys(weeklyReports).length}\n` +
+                    `Average Daily: Ksh ${Math.round(weekProfit / Object.keys(weeklyReports).length).toLocaleString()}`;
+            }
+
+            if (shareMessage) {
+                await Share.share({
+                    title: 'Track Biz Profit Report',
+                    message: shareMessage,
+                });
+            }
+        } catch (error) {
+            console.error('Share error:', error);
         }
     };
 
@@ -81,8 +193,8 @@ const ProfitMarginReportScreen = ({ navigation }) => {
 
     const getGrowthIcon = (current, previous) => {
         if (!previous || previous === 0) return <TrendingUp size={14} color={Colors.success} />;
-        return current >= previous ? 
-            <TrendingUp size={14} color={Colors.success} /> : 
+        return current >= previous ?
+            <TrendingUp size={14} color={Colors.success} /> :
             <TrendingUp size={14} color={Colors.error} />;
     };
 
@@ -145,9 +257,9 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                     <BarChart3 size={20} color="#4F46E5" />
                 </View>
                 <Text style={styles.summaryLabel}>Profit Margin</Text>
-                <Text style={[styles.summaryValue, { 
-                    color: (todayReport?.margin || 0) > 20 ? Colors.success : 
-                           (todayReport?.margin || 0) > 10 ? Colors.warning : Colors.error 
+                <Text style={[styles.summaryValue, {
+                    color: (todayReport?.margin || 0) > 20 ? Colors.success :
+                        (todayReport?.margin || 0) > 10 ? Colors.warning : Colors.error
                 }]}>
                     {todayReport?.margin || 0}%
                 </Text>
@@ -165,13 +277,25 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                     <Text style={styles.emptyStateSubtext}>
                         Sales will appear here when you make transactions
                     </Text>
+                    <TouchableOpacity
+                        style={styles.refreshButton}
+                        onPress={handleManualRefresh}
+                    >
+                        <RefreshCw size={16} color={Colors.primary} />
+                        <Text style={styles.refreshButtonText}>Refresh Data</Text>
+                    </TouchableOpacity>
                 </View>
             );
         }
 
         return (
             <View style={styles.breakdownSection}>
-                <Text style={styles.sectionTitle}>Itemized Breakdown</Text>
+                <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Itemized Breakdown</Text>
+                    <Text style={styles.transactionCount}>
+                        {todayReport.transactionCount} transactions
+                    </Text>
+                </View>
                 <View style={styles.breakdownHeader}>
                     <Text style={styles.breakdownHeaderText}>Item</Text>
                     <Text style={styles.breakdownHeaderText}>Sold</Text>
@@ -183,10 +307,10 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                     <View key={index} style={styles.breakdownRow}>
                         <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
                         <Text style={styles.itemData}>{item.sold}</Text>
-                        <Text style={styles.itemData}>Ksh {item.retailPrice}</Text>
-                        <Text style={styles.itemData}>Ksh {item.wholesalePrice}</Text>
+                        <Text style={styles.itemData}>Ksh {item.retailPrice?.toLocaleString()}</Text>
+                        <Text style={styles.itemData}>Ksh {item.wholesalePrice?.toLocaleString()}</Text>
                         <Text style={[styles.itemData, { color: Colors.success, fontWeight: '700' }]}>
-                            Ksh {item.profit.toLocaleString()}
+                            Ksh {item.profit?.toLocaleString()}
                         </Text>
                     </View>
                 ))}
@@ -195,12 +319,19 @@ const ProfitMarginReportScreen = ({ navigation }) => {
     };
 
     const renderInventoryInsights = () => {
-        if (!inventoryStats) return null;
+        if (!inventoryStats) {
+            return (
+                <View style={styles.emptyState}>
+                    <ActivityIndicator size="large" color={Colors.primary} />
+                    <Text style={styles.emptyStateText}>Loading inventory insights...</Text>
+                </View>
+            );
+        }
 
         return (
             <View style={styles.insightsSection}>
                 <Text style={styles.sectionTitle}>Inventory Insights</Text>
-                
+
                 {/* Stock Value */}
                 <View style={styles.insightCard}>
                     <View style={styles.insightHeader}>
@@ -238,7 +369,7 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                                 <Text style={styles.bestItemName}>{item.name}</Text>
                                 <View style={styles.bestItemStats}>
                                     <Text style={styles.bestItemProfit}>
-                                        Ksh { (item.unitPrice - item.wholesalePrice).toLocaleString() }
+                                        Ksh {(item.unitPrice - item.wholesalePrice).toLocaleString()}
                                     </Text>
                                     <Text style={styles.bestItemMargin}>
                                         {item.profitMargin}% margin
@@ -330,10 +461,10 @@ const ProfitMarginReportScreen = ({ navigation }) => {
     return (
         <View style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
-            
+
             {/* Header */}
             <View style={styles.header}>
-                <TouchableOpacity 
+                <TouchableOpacity
                     style={styles.backButton}
                     onPress={() => navigation.goBack()}
                 >
@@ -341,11 +472,17 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Profit & Margin Report</Text>
                 <View style={styles.headerActions}>
-                    <TouchableOpacity style={styles.actionButton}>
-                        <Share2 size={20} color={Colors.surface} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionButton}>
-                        <Download size={20} color={Colors.surface} />
+
+                    <TouchableOpacity
+                        style={styles.actionButton}
+                        onPress={handleExport}
+                        disabled={exporting}
+                    >
+                        {exporting ? (
+                            <ActivityIndicator size="small" color={Colors.surface} />
+                        ) : (
+                            <Download size={20} color={Colors.surface} />
+                        )}
                     </TouchableOpacity>
                 </View>
             </View>
@@ -507,11 +644,21 @@ const styles = StyleSheet.create({
     breakdownSection: {
         padding: Spacing.md,
     },
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+    },
     sectionTitle: {
         fontSize: 16,
         fontWeight: '700',
         color: Colors.text,
-        marginBottom: Spacing.md,
+    },
+    transactionCount: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        fontWeight: '600',
     },
     breakdownHeader: {
         flexDirection: 'row',
@@ -564,11 +711,28 @@ const styles = StyleSheet.create({
         color: Colors.text,
         marginTop: Spacing.md,
         marginBottom: Spacing.xs,
+        textAlign: 'center',
     },
     emptyStateSubtext: {
         fontSize: 12,
         color: Colors.textSecondary,
         textAlign: 'center',
+        marginBottom: Spacing.md,
+    },
+    refreshButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
+        backgroundColor: Colors.primary + '15',
+        borderRadius: BorderRadius.md,
+        marginTop: Spacing.sm,
+    },
+    refreshButtonText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: Colors.primary,
     },
     insightsSection: {
         padding: Spacing.md,

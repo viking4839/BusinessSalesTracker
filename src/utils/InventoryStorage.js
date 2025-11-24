@@ -7,21 +7,20 @@ class InventoryStorage {
     static async loadInventory() {
         try {
             const data = await AsyncStorage.getItem(INVENTORY_KEY);
-            if (data) {
-                return JSON.parse(data);
-            }
+            const items = data ? JSON.parse(data) : [];
 
-            // If no categories stored, extract from inventory items
-            const items = await this.loadInventory();
-            const categories = [...new Set(items.map(item => item.category).filter(Boolean))];
-
-            if (categories.length > 0) {
-                await this.saveCategories(categories);
-            }
-
-            return categories;
+            // ✅ FIXED: Ensure all items have the new wholesale price fields with defaults
+            return items.map(item => ({
+                ...item,
+                wholesalePrice: item.wholesalePrice || item.unitPrice, // Default to retail price if not set
+                supplier: item.supplier || '',
+                profitPerUnit: item.profitPerUnit || (item.unitPrice - (item.wholesalePrice || item.unitPrice)),
+                profitMargin: item.profitMargin || 0,
+                totalCost: item.totalCost || (item.quantity * (item.wholesalePrice || item.unitPrice)),
+                totalPotentialProfit: item.totalPotentialProfit || (item.quantity * (item.unitPrice - (item.wholesalePrice || item.unitPrice)))
+            }));
         } catch (error) {
-            console.error('loadCategories error:', error);
+            console.error('loadInventory error:', error);
             return [];
         }
     }
