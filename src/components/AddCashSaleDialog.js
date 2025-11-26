@@ -111,24 +111,20 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
     };
 
     const submitSale = async (finalAmount) => {
-        const saleData = {
-            amount: finalAmount,
-            customerName,
-            phone,
-            notes,
-            paymentMethod,
-            items: linkInventory && cart.length > 0 ? cart.map(item => ({
-                id: item.id,
-                name: item.name,
-                quantity: item.quantity,
-                unitPrice: item.unitPrice,
-                wholesalePrice: item.wholesalePrice,
-                total: item.unitPrice * item.quantity
-            })) : [],
-            isMultiItem: linkInventory && cart.length > 0,
-        };
-
         if (linkInventory && cart.length > 0) {
+            // STEP 1: Validate all items have sufficient stock BEFORE any updates
+            for (const ci of cart) {
+                const inventoryItem = inventoryItems.find(item => item.id === ci.id);
+                if (!inventoryItem || ci.quantity > inventoryItem.quantity) {
+                    Alert.alert(
+                        'Insufficient Stock', 
+                        `Not enough stock for ${ci.name}. Only ${inventoryItem?.quantity || 0} units available.`
+                    );
+                    return;
+                }
+            }
+
+            // STEP 2: Update inventory for ALL items
             for (const ci of cart) {
                 const success = await InventoryStorage.adjustQuantity(ci.id, -ci.quantity);
                 if (!success) {
@@ -136,9 +132,53 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                     return;
                 }
             }
+
+            // STEP 3: Create a SINGLE combined sale with ALL items
+            const combinedSaleData = {
+                amount: finalAmount,
+                customerName,
+                phone,
+                notes: notes || `Sale with ${cart.length} item(s)`,
+                paymentMethod,
+                timestamp: new Date().toISOString(),
+                // CRITICAL: Include ALL items in a single transaction
+                items: cart.map(ci => ({
+                    id: ci.id,
+                    name: ci.name,
+                    quantity: ci.quantity,
+                    unitPrice: ci.unitPrice,
+                    wholesalePrice: ci.wholesalePrice || ci.unitPrice,
+                    total: ci.unitPrice * ci.quantity
+                })),
+                isMultiItem: cart.length > 1,
+                // Legacy fields for backward compatibility (use first item)
+                linkedInventoryId: cart[0].id,
+                linkedInventoryName: cart[0].name,
+                saleQuantity: cart[0].quantity,
+            };
+
+            console.log(`📦 Recording combined sale with ${cart.length} items:`, 
+                        cart.map(item => `${item.name} (${item.quantity})`).join(', '));
+
+            // STEP 4: ONE call to onAddSale with ALL the data
+            onAddSale(combinedSaleData);
+
+        } else {
+            // Non-inventory sale (manual amount entry)
+            const saleData = {
+                amount: finalAmount,
+                customerName,
+                phone,
+                notes,
+                paymentMethod,
+                timestamp: new Date().toISOString(),
+                items: [],
+                isMultiItem: false,
+            };
+            onAddSale(saleData);
         }
 
-        onAddSale(saleData);
+        // STEP 5: UI cleanup and success notification
         resetForm();
         onClose();
 
@@ -157,6 +197,7 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
             );
         }, 300);
 
+        // STEP 6: Refresh profit report and navigate
         await ProfitReportStorage.refreshTodaysReport();
         DeviceEventEmitter.emit('profitReportUpdated');
         navigation.navigate('ProfitMarginReport');
@@ -470,6 +511,10 @@ const styles = StyleSheet.create({
         fontSize: 15,
         color: Colors.text,
     },
+    autoCalculatedInput: {
+        backgroundColor: '#F0F9FF',
+        borderColor: Colors.primary,
+    },
     inputWithIcon: {
         position: 'relative',
     },
@@ -520,7 +565,7 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.xs,
     },
     itemChipInCart: {
-        backgroundColor: Colors.primary,
+        backgroundColor: '#D4E7FF',
         borderColor: Colors.primary,
     },
     itemChipContent: {
@@ -613,6 +658,25 @@ const styles = StyleSheet.create({
     },
     removeButton: {
         padding: Spacing.sm,
+    },
+    cartTotal: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: Spacing.sm,
+        paddingTop: Spacing.sm,
+        borderTopWidth: 2,
+        borderTopColor: Colors.border,
+    },
+    cartTotalLabel: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    cartTotalAmount: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.success,
     },
     helperText: {
         fontSize: 12,

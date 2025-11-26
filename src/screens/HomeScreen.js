@@ -371,7 +371,7 @@ const HomeScreen = ({ navigation, route }) => {
         amount: Number(saleData.amount),
         sender: saleData.customerName || 'Cash Customer',
         phone: saleData.phone || null,
-        timestamp: new Date().toISOString(),
+        timestamp: saleData.timestamp || new Date().toISOString(),
         type: 'received',
         transactionType: 'received',
         message: saleData.notes || 'Manual cash sale',
@@ -380,14 +380,26 @@ const HomeScreen = ({ navigation, route }) => {
         isBusinessTransaction: true,
         isManual: true,
         category: 'general',
-        // NEW: Inventory link fields
+
+        // ✅ NEW: Include the items array for multi-item sales
+        items: saleData.items || [],
+        isMultiItem: saleData.isMultiItem || false,
+
+        // Legacy fields for backward compatibility (single item)
         linkedInventoryId: saleData.linkedInventoryId || null,
         linkedInventoryName: saleData.linkedInventoryName || null,
         saleQuantity: saleData.saleQuantity || null,
-        stockDeducted: !!saleData.linkedInventoryId,
+        stockDeducted: !!saleData.linkedInventoryId || (saleData.items && saleData.items.length > 0),
       };
 
       console.log('💵 Adding manual sale:', newTransaction);
+
+      // Log items for debugging
+      if (newTransaction.items && newTransaction.items.length > 0) {
+        console.log(`📦 Sale contains ${newTransaction.items.length} items:`,
+          newTransaction.items.map(item => `${item.name} (${item.quantity})`).join(', ')
+        );
+      }
 
       const updatedTransactions = [newTransaction, ...transactions];
       setTransactions(updatedTransactions);
