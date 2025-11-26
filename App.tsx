@@ -26,6 +26,8 @@ import InventoryScreen from './src/screens/InventoryScreen';
 import EditInventoryItemScreen from './src/screens/EditInventoryItemScreen';
 import CreditManagerScreen from './src/screens/CreditManagerScreen';
 import ProfitMarginReportScreen from './src/screens/ProfitMarginReportScreen';
+import PrivacyPolicy from './src/screens/PrivacyPolicy';
+import RateApp from './src/screens/RateApp';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -75,6 +77,8 @@ function SettingsStack() {
       <Stack.Screen name="BusinessHours" component={BusinessHoursScreen} />
       <Stack.Screen name="CurrencySettings" component={CurrencySettingsScreen} />
       <Stack.Screen name="Debug" component={DebugScreen} />
+      <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicy} />
+      <Stack.Screen name="RateApp" component={RateApp} />
 
     </Stack.Navigator>
   );

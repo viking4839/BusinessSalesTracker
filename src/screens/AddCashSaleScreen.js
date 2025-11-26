@@ -66,6 +66,10 @@ const AddCashSaleScreen = ({ navigation }) => {
             // Update daily totals
             await updateDailyTotals(transaction);
 
+            // Save to TransactionStorage and refresh ProfitReportStorage
+
+            await ProfitReportStorage.refreshTodaysReport();
+
             Alert.alert(
                 'Success!',
                 `Cash sale of Ksh ${parseFloat(amount).toLocaleString()} recorded`,

@@ -105,6 +105,10 @@ export class CreditStorage {
         ).size;
         return { outstanding, owingCustomers, totalCredits: list.length };
     }
+
+    static clearCredits() {
+        return AsyncStorage.removeItem(CREDIT_KEY);
+    }
 }
 
 export default CreditStorage;

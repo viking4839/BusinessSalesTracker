@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, TextInput, Alert, TouchableOpacity } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius } from '../styles/Theme';
 import Button from '../components/Button';
+import { ArrowLeft } from 'lucide-react-native';
 
 const BusinessHoursScreen = ({ navigation }) => {
     const [open, setOpen] = useState('08:00');
@@ -26,6 +27,13 @@ const BusinessHoursScreen = ({ navigation }) => {
 
     return (
         <View style={styles.container}>
+            {/* Header with back button and title */}
+            <View style={styles.header}>
+                <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginRight: 12 }}>
+                    <ArrowLeft size={24} color={Colors.surface} />
+                </TouchableOpacity>
+                <Text style={styles.headerTitle}>Business Hours</Text>
+            </View>
             <Text style={styles.label}>Opening Time</Text>
             <TextInput style={styles.input} value={open} onChangeText={setOpen} placeholder="08:00" />
             <Text style={styles.label}>Closing Time</Text>
@@ -37,6 +45,21 @@ const BusinessHoursScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, padding: Spacing.lg, backgroundColor: Colors.background },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.primary,
+        paddingVertical: 24,
+        paddingHorizontal: 20,
+        borderBottomLeftRadius: 16,
+        borderBottomRightRadius: 16,
+        marginBottom: 20,
+    },
+    headerTitle: {
+        fontSize: 22,
+        fontWeight: 'bold',
+        color: Colors.surface,
+    },
     label: { ...Typography.caption, color: Colors.textSecondary, marginTop: Spacing.md, marginBottom: 6 },
     input: {
         borderWidth: 1, borderColor: Colors.border, borderRadius: BorderRadius.md, padding: Spacing.md,

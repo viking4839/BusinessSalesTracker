@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, ScrollView, Platform, Animated } from 'react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
-import { ArrowLeft, Plus, CheckCircle, AlertTriangle, User, X, Search } from 'lucide-react-native';
+import { ArrowLeft, Plus, CheckCircle, AlertTriangle, User, X, Search, DollarSign, Clock } from 'lucide-react-native';
 import CreditStorage from '../utils/CreditStorage';
 import InventoryStorage from '../utils/InventoryStorage';
 
@@ -161,6 +161,25 @@ const CreditManagerScreen = ({ navigation }) => {
         )
         : credits;
 
+    // Calculate summary statistics
+    const getSummaryStats = () => {
+        const pendingCredits = credits.filter(c => c.status === 'pending');
+        const totalPending = pendingCredits.reduce((sum, c) => sum + c.remainingBalance, 0);
+        const overdueCredits = pendingCredits.filter(c => {
+            const daysOld = (new Date() - new Date(c.dateCreated)) / (1000 * 60 * 60 * 24);
+            return daysOld > 7; // Overdue if older than 7 days
+        });
+
+        return {
+            totalPending: totalPending,
+            pendingCount: pendingCredits.length,
+            overdueCount: overdueCredits.length,
+            totalCustomers: new Set(credits.map(c => c.customerName)).size
+        };
+    };
+
+    const stats = getSummaryStats();
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
@@ -194,6 +213,39 @@ const CreditManagerScreen = ({ navigation }) => {
                     )}
                 </Animated.View>
             </View>
+
+            {credits.length > 0 && (
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.statsContainer}
+                    contentContainerStyle={styles.statsContent}
+                >
+                    <View style={[styles.statCard, { backgroundColor: '#EFF6FF' }]}>
+                        <DollarSign size={20} color={Colors.primary} />
+                        <Text style={styles.statValue}>Ksh {stats.totalPending.toLocaleString()}</Text>
+                        <Text style={styles.statLabel}>Pending Balance</Text>
+                    </View>
+
+                    <View style={[styles.statCard, { backgroundColor: '#FEF3C7' }]}>
+                        <Clock size={20} color={Colors.warning} />
+                        <Text style={styles.statValue}>{stats.pendingCount}</Text>
+                        <Text style={styles.statLabel}>Pending Credits</Text>
+                    </View>
+
+                    <View style={[styles.statCard, { backgroundColor: '#FEE2E2' }]}>
+                        <AlertTriangle size={20} color={Colors.error} />
+                        <Text style={styles.statValue}>{stats.overdueCount}</Text>
+                        <Text style={styles.statLabel}>Overdue</Text>
+                    </View>
+
+                    <View style={[styles.statCard, { backgroundColor: '#D1FAE5' }]}>
+                        <User size={20} color={Colors.success} />
+                        <Text style={styles.statValue}>{stats.totalCustomers}</Text>
+                        <Text style={styles.statLabel}>Customers</Text>
+                    </View>
+                </ScrollView>
+            )}
 
             <FlatList
                 data={filteredCredits}
@@ -557,10 +609,10 @@ const styles = StyleSheet.create({
     },
     pendingBadge: { backgroundColor: '#F59E0B' },
     clearedBadge: { backgroundColor: Colors.success },
-    creditName: { fontSize: 16, fontWeight: '600', color: Colors.text },
-    creditItem: { fontSize: 13, color: Colors.textSecondary },
+    creditName: { fontSize: 15, fontWeight: '600', color: Colors.text },
+    creditItem: { fontSize: 12, color: Colors.textSecondary },
     creditDate: { fontSize: 12, color: Colors.textLight },
-    creditAmount: { fontSize: 17, fontWeight: '700' },
+    creditAmount: { fontSize: 15, fontWeight: '700' },
     empty: { alignItems: 'center', padding: Spacing.lg },
     emptyText: { fontSize: 15, fontWeight: '600', color: Colors.text },
     emptySub: { fontSize: 11, color: Colors.textSecondary },
@@ -740,7 +792,32 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: Colors.text,
         padding: 0,
-    }
+    },
+    statsContainer: {
+        paddingHorizontal: Spacing.md,
+        marginTop: Spacing.md,
+    },
+    statsContent: {
+        paddingRight: Spacing.md,
+        gap: Spacing.sm,
+    },
+    statCard: {
+        width: 140,
+        padding: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        marginRight: Spacing.sm,
+    },
+    statValue: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: Colors.text,
+        marginTop: Spacing.xs,
+    },
+    statLabel: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        marginTop: 2,
+    },
 });
 
 export default CreditManagerScreen;

@@ -10,13 +10,14 @@ import {
     Alert,
     Switch,
     Platform,
+    DeviceEventEmitter,
 } from 'react-native';
-import { X, DollarSign, User, Phone, FileText, CreditCard, Package } from 'lucide-react-native';
+import { X, DollarSign, User, Phone, Package, Trash2, Plus, Minus } from 'lucide-react-native';
 import InventoryStorage from '../utils/InventoryStorage';
-import { Colors, Spacing, BorderRadius, Typography, Shadows } from '../styles/Theme';
+import ProfitReportStorage from '../utils/ProfitReportStorage';
+import { Colors, Spacing, BorderRadius } from '../styles/Theme';
 
-const AddCashSaleDialog = ({ visible, onClose, onAddSale }) => {
-    // ✅ ALL HOOKS AT THE TOP (before any conditional logic)
+const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
     const [amount, setAmount] = useState('');
     const [customerName, setCustomerName] = useState('');
     const [phone, setPhone] = useState('');
@@ -24,22 +25,19 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale }) => {
     const [paymentMethod, setPaymentMethod] = useState('Cash');
     const [linkInventory, setLinkInventory] = useState(true);
     const [inventoryItems, setInventoryItems] = useState([]);
-    const [selectedItem, setSelectedItem] = useState(null);
-    const [saleQuantity, setSaleQuantity] = useState('1');
+    const [cart, setCart] = useState([]);
 
-    // ✅ useEffect AFTER all useState
     useEffect(() => {
         if (visible) {
             loadInventory();
+            resetForm();
         }
     }, [visible]);
 
     const loadInventory = async () => {
         try {
             const items = await InventoryStorage.loadInventory();
-            // Only show items with stock > 0
-            const available = items.filter(item => item.quantity > 0);
-            setInventoryItems(available);
+            setInventoryItems(items.filter(item => item.quantity > 0));
         } catch (error) {
             console.error('Load inventory error:', error);
         }
@@ -51,90 +49,117 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale }) => {
         setPhone('');
         setNotes('');
         setPaymentMethod('Cash');
-        setSelectedItem(null);
-        setSaleQuantity('1');
+        setCart([]);
     };
 
+    // Cart management
+    const addToCart = (item) => {
+        const inCart = cart.find(ci => ci.id === item.id);
+        if (inCart) {
+            if (inCart.quantity < item.quantity) {
+                setCart(cart.map(ci =>
+                    ci.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci
+                ));
+            } else {
+                Alert.alert('Insufficient Stock', `Only ${item.quantity} units available`);
+            }
+        } else {
+            setCart([...cart, { ...item, quantity: 1 }]);
+        }
+    };
+
+    const removeFromCart = (itemId) => {
+        setCart(cart.filter(ci => ci.id !== itemId));
+    };
+
+    const updateCartQuantity = (itemId, qty) => {
+        if (qty <= 0) {
+            removeFromCart(itemId);
+            return;
+        }
+        const inventoryItem = inventoryItems.find(item => item.id === itemId);
+        if (inventoryItem && qty > inventoryItem.quantity) {
+            Alert.alert('Insufficient Stock', `Only ${inventoryItem.quantity} units available`);
+            return;
+        }
+        setCart(cart.map(ci =>
+            ci.id === itemId ? { ...ci, quantity: qty } : ci
+        ));
+    };
+
+    const getCartTotal = () => cart.reduce((sum, ci) => sum + ci.unitPrice * ci.quantity, 0);
+
     const handleSubmit = async () => {
-        if (!amount || Number(amount) <= 0) {
+        const totalAmount = linkInventory && cart.length > 0 ? getCartTotal() : Number(amount);
+
+        if (!totalAmount || totalAmount <= 0) {
             Alert.alert('Invalid Amount', 'Please enter a valid amount');
             return;
         }
 
-        // If inventory linking is enabled and item selected
-        if (linkInventory && selectedItem) {
-            const qty = Number(saleQuantity) || 1;
-
-            if (qty > selectedItem.quantity) {
-                Alert.alert(
-                    'Insufficient Stock',
-                    `Only ${selectedItem.quantity} units available`
-                );
-                return;
-            }
-
-            // Verify amount matches (optional warning)
-            const expectedAmount = selectedItem.unitPrice * qty;
-            if (Number(amount) !== expectedAmount) {
-                Alert.alert(
-                    'Amount Mismatch',
-                    `Expected Ksh ${expectedAmount} for ${qty} × ${selectedItem.name}\nYou entered Ksh ${amount}\n\nContinue anyway?`,
-                    [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Continue', onPress: () => submitSale() },
-                    ]
-                );
-                return;
+        if (linkInventory && cart.length > 0) {
+            for (const ci of cart) {
+                const inventoryItem = inventoryItems.find(item => item.id === ci.id);
+                if (!inventoryItem || ci.quantity > inventoryItem.quantity) {
+                    Alert.alert('Insufficient Stock', `Not enough stock for ${ci.name}. Only ${inventoryItem?.quantity || 0} units available.`);
+                    return;
+                }
             }
         }
 
-        submitSale();
+        await submitSale(totalAmount);
     };
 
-    const submitSale = async () => {
+    const submitSale = async (finalAmount) => {
         const saleData = {
-            amount,
+            amount: finalAmount,
             customerName,
             phone,
             notes,
             paymentMethod,
-            linkedInventoryId: linkInventory && selectedItem ? selectedItem.id : null,
-            linkedInventoryName: linkInventory && selectedItem ? selectedItem.name : null,
-            saleQuantity: linkInventory && selectedItem ? Number(saleQuantity) : null,
+            items: linkInventory && cart.length > 0 ? cart.map(item => ({
+                id: item.id,
+                name: item.name,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                wholesalePrice: item.wholesalePrice,
+                total: item.unitPrice * item.quantity
+            })) : [],
+            isMultiItem: linkInventory && cart.length > 0,
         };
 
-        // Deduct inventory if linked
-        if (linkInventory && selectedItem) {
-            const qty = Number(saleQuantity) || 1;
-            const success = await InventoryStorage.adjustQuantity(selectedItem.id, -qty);
-
-            if (!success) {
-                Alert.alert('Error', 'Failed to update inventory');
-                return;
+        if (linkInventory && cart.length > 0) {
+            for (const ci of cart) {
+                const success = await InventoryStorage.adjustQuantity(ci.id, -ci.quantity);
+                if (!success) {
+                    Alert.alert('Error', `Failed to update inventory for ${ci.name}`);
+                    return;
+                }
             }
         }
 
-        // Call parent handler
         onAddSale(saleData);
-
-        // Reset form
         resetForm();
-
-        // Close dialog immediately
         onClose();
 
-        // Show success confirmation after dialog closes
         setTimeout(() => {
-            const itemInfo = selectedItem
-                ? `\n${selectedItem.name} (${saleQuantity} units)`
-                : '';
-
+            let itemInfo = '';
+            if (cart.length > 0) {
+                itemInfo = '\n\nItems sold:';
+                cart.forEach(item => {
+                    itemInfo += `\n• ${item.name} (${item.quantity} × Ksh ${item.unitPrice})`;
+                });
+            }
             Alert.alert(
                 '✅ Sale Recorded',
-                `Amount: Ksh ${Number(amount).toLocaleString()}${itemInfo}\n\nSale has been added to your transactions.`,
+                `Total Amount: Ksh ${finalAmount.toLocaleString()}${itemInfo}\n\nSale has been added to your transactions.`,
                 [{ text: 'Great!', style: 'default' }]
             );
-        }, 300); // Small delay so dialog closes first
+        }, 300);
+
+        await ProfitReportStorage.refreshTodaysReport();
+        DeviceEventEmitter.emit('profitReportUpdated');
+        navigation.navigate('ProfitMarginReport');
     };
 
     return (
@@ -162,22 +187,30 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale }) => {
                     <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
                         {/* Amount */}
                         <View style={styles.inputGroup}>
-                            <Text style={styles.label}>Amount (KSh) *</Text>
+                            <Text style={styles.label}>
+                                Amount (KSh) {linkInventory && cart.length > 0 ? '(Auto-calculated)' : '*'}
+                            </Text>
                             <TextInput
-                                style={styles.input}
+                                style={[styles.input, linkInventory && cart.length > 0 && styles.autoCalculatedInput]}
                                 placeholder="0"
-                                value={amount}
+                                value={linkInventory && cart.length > 0 ? getCartTotal().toString() : amount}
                                 onChangeText={setAmount}
                                 keyboardType="numeric"
                                 placeholderTextColor={Colors.textLight}
+                                editable={!linkInventory || cart.length === 0}
                             />
+                            {linkInventory && cart.length > 0 && (
+                                <Text style={styles.helperText}>
+                                    Amount automatically calculated from cart
+                                </Text>
+                            )}
                         </View>
 
                         {/* Link to Inventory Toggle */}
                         <View style={styles.toggleContainer}>
                             <View style={styles.toggleLeft}>
                                 <Package size={18} color={Colors.primary} />
-                                <Text style={styles.toggleLabel}>Link to inventory item</Text>
+                                <Text style={styles.toggleLabel}>Link to inventory items</Text>
                             </View>
                             <Switch
                                 value={linkInventory}
@@ -191,84 +224,89 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale }) => {
                         {linkInventory && (
                             <>
                                 <View style={styles.inputGroup}>
-                                    <Text style={styles.label}>Select Item Sold</Text>
+                                    <Text style={styles.label}>Select Items</Text>
                                     {inventoryItems.length === 0 ? (
                                         <Text style={styles.noItemsText}>
                                             No inventory items available. Add stock first.
                                         </Text>
                                     ) : (
                                         <ScrollView style={styles.itemsList} nestedScrollEnabled>
-                                            {inventoryItems.map(item => (
-                                                <TouchableOpacity
-                                                    key={item.id}
-                                                    style={[
-                                                        styles.itemChip,
-                                                        selectedItem?.id === item.id && styles.itemChipActive,
-                                                    ]}
-                                                    onPress={() => {
-                                                        setSelectedItem(item);
-                                                        setAmount(String(item.unitPrice));
-                                                    }}
-                                                >
-                                                    <View style={styles.itemChipContent}>
-                                                        <Text
-                                                            style={[
-                                                                styles.itemChipName,
-                                                                selectedItem?.id === item.id && styles.itemChipNameActive,
-                                                            ]}
-                                                        >
-                                                            {item.name}
-                                                        </Text>
-                                                        <Text
-                                                            style={[
-                                                                styles.itemChipPrice,
-                                                                selectedItem?.id === item.id && styles.itemChipPriceActive,
-                                                            ]}
-                                                        >
-                                                            Ksh {item.unitPrice} • {item.quantity} in stock
-                                                        </Text>
-                                                    </View>
-                                                </TouchableOpacity>
-                                            ))}
+                                            {inventoryItems.map(item => {
+                                                const inCart = cart.find(ci => ci.id === item.id);
+                                                const availableStock = item.quantity - (inCart ? inCart.quantity : 0);
+
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={item.id}
+                                                        style={[
+                                                            styles.itemChip,
+                                                            inCart && styles.itemChipInCart,
+                                                        ]}
+                                                        onPress={() => addToCart(item)}
+                                                    >
+                                                        <View style={styles.itemChipContent}>
+                                                            <Text style={styles.itemChipName}>
+                                                                {item.name}
+                                                            </Text>
+                                                            <Text style={styles.itemChipPrice}>
+                                                                Ksh {item.unitPrice} • {availableStock} available
+                                                            </Text>
+                                                            {inCart && (
+                                                                <Text style={styles.inCartBadge}>
+                                                                    In cart: {inCart.quantity}
+                                                                </Text>
+                                                            )}
+                                                        </View>
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
                                         </ScrollView>
                                     )}
                                 </View>
 
-                                {/* Quantity (if item selected) */}
-                                {selectedItem && (
-                                    <View style={styles.inputGroup}>
-                                        <Text style={styles.label}>Quantity Sold</Text>
-                                        <View style={styles.quantityRow}>
-                                            <TouchableOpacity
-                                                style={styles.qtyButton}
-                                                onPress={() => {
-                                                    const current = Number(saleQuantity) || 1;
-                                                    if (current > 1) setSaleQuantity(String(current - 1));
-                                                }}
-                                            >
-                                                <Text style={styles.qtyButtonText}>−</Text>
-                                            </TouchableOpacity>
-                                            <TextInput
-                                                style={styles.qtyInput}
-                                                value={saleQuantity}
-                                                onChangeText={setSaleQuantity}
-                                                keyboardType="numeric"
-                                            />
-                                            <TouchableOpacity
-                                                style={styles.qtyButton}
-                                                onPress={() => {
-                                                    const current = Number(saleQuantity) || 0;
-                                                    if (current < selectedItem.quantity) {
-                                                        setSaleQuantity(String(current + 1));
-                                                    }
-                                                }}
-                                            >
-                                                <Text style={styles.qtyButtonText}>+</Text>
-                                            </TouchableOpacity>
+                                {/* Cart Summary */}
+                                {cart.length > 0 && (
+                                    <View style={styles.cartSection}>
+                                        <Text style={styles.cartTitle}>Cart Items</Text>
+                                        {cart.map((item) => (
+                                            <View key={item.id} style={styles.cartItem}>
+                                                <View style={styles.cartItemInfo}>
+                                                    <Text style={styles.cartItemName}>{item.name}</Text>
+                                                    <Text style={styles.cartItemPrice}>
+                                                        Ksh {item.unitPrice} × {item.quantity} = Ksh {(item.unitPrice * item.quantity).toLocaleString()}
+                                                    </Text>
+                                                </View>
+                                                <View style={styles.cartItemActions}>
+                                                    <View style={styles.quantityControls}>
+                                                        <TouchableOpacity
+                                                            style={styles.qtyButton}
+                                                            onPress={() => updateCartQuantity(item.id, item.quantity - 1)}
+                                                        >
+                                                            <Minus size={16} color={Colors.text} />
+                                                        </TouchableOpacity>
+                                                        <Text style={styles.quantityText}>{item.quantity}</Text>
+                                                        <TouchableOpacity
+                                                            style={styles.qtyButton}
+                                                            onPress={() => updateCartQuantity(item.id, item.quantity + 1)}
+                                                        >
+                                                            <Plus size={16} color={Colors.text} />
+                                                        </TouchableOpacity>
+                                                    </View>
+                                                    <TouchableOpacity
+                                                        style={styles.removeButton}
+                                                        onPress={() => removeFromCart(item.id)}
+                                                    >
+                                                        <Trash2 size={16} color={Colors.error} />
+                                                    </TouchableOpacity>
+                                                </View>
+                                            </View>
+                                        ))}
+                                        <View style={styles.cartTotal}>
+                                            <Text style={styles.cartTotalLabel}>Cart Total:</Text>
+                                            <Text style={styles.cartTotalAmount}>
+                                                Ksh {getCartTotal().toLocaleString()}
+                                            </Text>
                                         </View>
-                                        <Text style={styles.helperText}>
-                                            Total: Ksh {((Number(saleQuantity) || 1) * selectedItem.unitPrice).toLocaleString()}
-                                        </Text>
                                     </View>
                                 )}
                             </>
@@ -358,7 +396,9 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale }) => {
                             style={[styles.button, styles.submitButton]}
                             onPress={handleSubmit}
                         >
-                            <Text style={styles.submitButtonText}>Record Sale</Text>
+                            <Text style={styles.submitButtonText}>
+                                Record Sale {cart.length > 0 ? `(${cart.length} items)` : ''}
+                            </Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -479,7 +519,7 @@ const styles = StyleSheet.create({
         padding: Spacing.sm,
         marginBottom: Spacing.xs,
     },
-    itemChipActive: {
+    itemChipInCart: {
         backgroundColor: Colors.primary,
         borderColor: Colors.primary,
     },
@@ -491,15 +531,15 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: Colors.text,
     },
-    itemChipNameActive: {
-        color: Colors.surface,
-    },
     itemChipPrice: {
         fontSize: 12,
         color: Colors.textSecondary,
     },
-    itemChipPriceActive: {
-        color: Colors.surface + 'CC',
+    inCartBadge: {
+        marginTop: 4,
+        fontSize: 12,
+        color: Colors.success,
+        fontWeight: '500',
     },
     noItemsText: {
         fontSize: 13,
@@ -508,7 +548,46 @@ const styles = StyleSheet.create({
         padding: Spacing.md,
         fontStyle: 'italic',
     },
-    quantityRow: {
+    cartSection: {
+        marginTop: Spacing.md,
+        padding: Spacing.sm,
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    cartTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: Colors.text,
+        marginBottom: Spacing.sm,
+    },
+    cartItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.sm,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    cartItemInfo: {
+        flex: 1,
+        marginRight: Spacing.sm,
+    },
+    cartItemName: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: Colors.text,
+    },
+    cartItemPrice: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+    },
+    cartItemActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    quantityControls: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: Colors.surface,
@@ -516,26 +595,24 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: Colors.border,
         overflow: 'hidden',
+        marginRight: Spacing.sm,
     },
     qtyButton: {
-        width: 44,
-        height: 44,
+        width: 36,
+        height: 36,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: Colors.background,
     },
-    qtyButtonText: {
-        fontSize: 20,
-        fontWeight: '600',
-        color: Colors.primary,
-    },
-    qtyInput: {
-        flex: 1,
-        textAlign: 'center',
-        fontSize: 16,
+    quantityText: {
+        fontSize: 14,
         fontWeight: '600',
         color: Colors.text,
         paddingVertical: Spacing.sm,
+        paddingHorizontal: Spacing.md,
+    },
+    removeButton: {
+        padding: Spacing.sm,
     },
     helperText: {
         fontSize: 12,

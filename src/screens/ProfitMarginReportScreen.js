@@ -1,6 +1,4 @@
-// screens/ProfitMarginReportScreen.js
-
-// screens/ProfitMarginReportScreen.js - FULLY FUNCTIONAL VERSION
+// screens/ProfitMarginReportScreen.js - UPDATED VERSION
 
 import React, { useState, useCallback } from 'react';
 import {
@@ -22,7 +20,6 @@ import {
     BarChart3,
     ArrowLeft,
     Download,
-    Share2,
     AlertTriangle,
     Crown,
     RefreshCw
@@ -30,7 +27,8 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import ProfitReportStorage from '../utils/ProfitReportStorage';
 import InventoryStorage from '../utils/InventoryStorage';
-import PDFExport from '../utils/PDFExport';
+import PrintPDF from '../utils/PrintPDF';
+
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 
 const ProfitMarginReportScreen = ({ navigation }) => {
@@ -67,6 +65,7 @@ const ProfitMarginReportScreen = ({ navigation }) => {
             // Load monthly reports  
             const monthly = await ProfitReportStorage.getMonthlyReports();
             setMonthlyReports(monthly);
+            console.log('✅ Monthly reports:', Object.keys(monthly).length);
 
             // Load inventory stats
             const stats = await InventoryStorage.getInventoryStats();
@@ -100,43 +99,76 @@ const ProfitMarginReportScreen = ({ navigation }) => {
         }
     };
 
+    // UPDATED: Corrected export function
     const handleExport = async () => {
         setExporting(true);
         try {
-            // Check if there's data to export
-            if (activeTab === 'today' && (!todayReport || Object.keys(todayReport).length === 0)) {
-                Alert.alert('No Data', 'There is no profit data to export for today.');
-                return;
-            } else if (activeTab === 'weekly' && Object.keys(weeklyReports).length === 0) {
-                Alert.alert('No Data', 'There is no weekly data to export.');
-                return;
+            let pdfPath;
+
+            switch (activeTab) {
+                case 'today':
+                    // Validate today's data
+                    if (!todayReport || !todayReport.totalSales) {
+                        Alert.alert('No Data', 'There is no profit data to export for today.');
+                        return;
+                    }
+                    pdfPath = await PrintPDF.exportDaily(todayReport, inventoryStats);
+
+                    break;
+
+                case 'weekly':
+                    // Validate weekly data
+                    if (!weeklyReports || Object.keys(weeklyReports).length === 0) {
+                        Alert.alert('No Data', 'There is no weekly data to export.');
+                        return;
+                    }
+                    pdfPath = await PrintPDF.exportWeekly(weeklyReports);
+
+                    break;
+
+                case 'insights':
+                    // For insights, use monthly data or today's data
+                    if (monthlyReports && Object.keys(monthlyReports).length > 0) {
+                        pdfPath = await PrintPDF.exportMonthly(monthlyReports);
+
+                    } else if (todayReport) {
+                        pdfPath = await PrintPDF.exportDaily(todayReport, inventoryStats);
+                    } else {
+                        Alert.alert('No Data', 'There is no data to export for insights.');
+                        return;
+                    }
+                    break;
+
+                default:
+                    throw new Error('Invalid tab selected for export');
             }
 
-            if (activeTab === 'today') {
-                await PDFExport.generateProfitReportPDF(todayReport, inventoryStats);
-            } else if (activeTab === 'weekly') {
-                await PDFExport.exportWeeklyReport(weeklyReports);
-            } else {
-                // For insights tab, use today's report
-                await PDFExport.generateProfitReportPDF(todayReport, inventoryStats);
-            }
-            // Success handled by share dialog
+            console.log('✅ PDF exported successfully:', pdfPath);
+
         } catch (error) {
-            console.error('Export error:', error);
+            console.error('❌ Export error:', error);
 
-            if (error.message && error.message.includes('Failed to generate report')) {
+            // User-friendly error messages
+            if (error.message.includes('permission')) {
                 Alert.alert(
-                    'Export Failed',
-                    'Could not generate the report. Please try again.',
+                    'Permission Required',
+                    'Please allow storage permissions to save PDF files.',
                     [{ text: 'OK' }]
                 );
-            } else if (error.message && error.message.includes('User did not share')) {
-                // User cancelled the share - no need to show error
-                console.log('User cancelled share');
+            } else if (error.message.includes('cancel')) {
+                // User cancelled share - no alert needed
+                console.log('User cancelled PDF share');
+            } else if (error.message.includes('No data')) {
+                Alert.alert(
+                    'No Data',
+                    'There is no report data available to export.',
+                    [{ text: 'OK' }]
+                );
             } else {
                 Alert.alert(
                     'Export Failed',
-                    error.message || 'An unexpected error occurred'
+                    error.message || 'Could not generate the PDF report. Please try again.',
+                    [{ text: 'OK' }]
                 );
             }
         } finally {
@@ -144,34 +176,7 @@ const ProfitMarginReportScreen = ({ navigation }) => {
         }
     };
 
-    const handleShare = async () => {
-        try {
-            let shareMessage = '';
-
-            if (activeTab === 'today' && todayReport) {
-                shareMessage = `🏪 Today's Profit Report:\n` +
-                    `Sales: Ksh ${todayReport.totalSales?.toLocaleString()}\n` +
-                    `Profit: Ksh ${todayReport.totalProfit?.toLocaleString()}\n` +
-                    `Margin: ${todayReport.margin}%\n` +
-                    `Transactions: ${todayReport.transactionCount}`;
-            } else if (activeTab === 'weekly') {
-                const weekProfit = Object.values(weeklyReports).reduce((sum, report) => sum + report.totalProfit, 0);
-                shareMessage = `🏪 Weekly Profit Report:\n` +
-                    `Total Profit: Ksh ${weekProfit.toLocaleString()}\n` +
-                    `Days: ${Object.keys(weeklyReports).length}\n` +
-                    `Average Daily: Ksh ${Math.round(weekProfit / Object.keys(weeklyReports).length).toLocaleString()}`;
-            }
-
-            if (shareMessage) {
-                await Share.share({
-                    title: 'Track Biz Profit Report',
-                    message: shareMessage,
-                });
-            }
-        } catch (error) {
-            console.error('Share error:', error);
-        }
-    };
+    // REMOVED: Old handleShare function since we're using PDF export instead
 
     const formatCurrency = (amount) => {
         return `Ksh ${amount?.toLocaleString() || '0'}`;
@@ -358,21 +363,21 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                 </View>
 
                 {/* Best Value Items */}
-                {inventoryStats.bestValueItems.length > 0 && (
+                {inventoryStats.bestValueItems && inventoryStats.bestValueItems.length > 0 && (
                     <View style={styles.insightCard}>
                         <View style={styles.insightHeader}>
                             <Crown size={16} color={Colors.warning} />
                             <Text style={styles.insightTitle}>Best Value Items</Text>
                         </View>
                         {inventoryStats.bestValueItems.slice(0, 3).map((item, index) => (
-                            <View key={item.id} style={styles.bestItemRow}>
+                            <View key={item.id || index} style={styles.bestItemRow}>
                                 <Text style={styles.bestItemName}>{item.name}</Text>
                                 <View style={styles.bestItemStats}>
                                     <Text style={styles.bestItemProfit}>
-                                        Ksh {(item.unitPrice - item.wholesalePrice).toLocaleString()}
+                                        Ksh {((item.unitPrice || 0) - (item.wholesalePrice || 0)).toLocaleString()}
                                     </Text>
                                     <Text style={styles.bestItemMargin}>
-                                        {item.profitMargin}% margin
+                                        {item.profitMargin || 0}% margin
                                     </Text>
                                 </View>
                             </View>
@@ -381,7 +386,7 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                 )}
 
                 {/* Low Margin Alerts */}
-                {inventoryStats.lowMarginItems.length > 0 && (
+                {inventoryStats.lowMarginItems && inventoryStats.lowMarginItems.length > 0 && (
                     <View style={[styles.insightCard, { borderColor: Colors.error }]}>
                         <View style={styles.insightHeader}>
                             <AlertTriangle size={16} color={Colors.error} />
@@ -392,9 +397,9 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                         <Text style={styles.alertText}>
                             {inventoryStats.lowMarginItems.length} items have less than 10% profit margin
                         </Text>
-                        {inventoryStats.lowMarginItems.slice(0, 2).map(item => (
-                            <Text key={item.id} style={styles.alertItem}>
-                                {item.name} ({item.profitMargin}% margin)
+                        {inventoryStats.lowMarginItems.slice(0, 2).map((item, index) => (
+                            <Text key={item.id || index} style={styles.alertItem}>
+                                {item.name} ({item.profitMargin || 0}% margin)
                             </Text>
                         ))}
                     </View>
@@ -472,7 +477,6 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Profit & Margin Report</Text>
                 <View style={styles.headerActions}>
-
                     <TouchableOpacity
                         style={styles.actionButton}
                         onPress={handleExport}
@@ -540,12 +544,16 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                     <Text style={styles.footerText}>
                         Last updated: {new Date().toLocaleTimeString()}
                     </Text>
+                    <Text style={[styles.footerText, { fontSize: 10, marginTop: 4 }]}>
+                        Export feature: {exporting ? 'Generating PDF...' : 'Ready to export'}
+                    </Text>
                 </View>
             </ScrollView>
         </View>
     );
 };
 
+// ... (keep your existing styles exactly the same)
 const styles = StyleSheet.create({
     container: {
         flex: 1,

@@ -34,51 +34,95 @@ export const ProfitReportStorage = {
 
       // Calculate profit for each transaction
       todaysTransactions.forEach(transaction => {
-        const saleAmount = transaction.amount;
-        totalSales += saleAmount;
+        // If transaction has multiple items (cart)
+        if (Array.isArray(transaction.items) && transaction.items.length > 0) {
+          transaction.items.forEach(item => {
+            let wholesaleCost = item.wholesalePrice || item.unitPrice || 0;
+            let itemName = item.name || 'Unknown Item';
+            let retailPrice = item.unitPrice || 0;
+            let qty = item.quantity || 1;
+            let itemId = item.id || null;
 
-        // Try to find matching inventory item
-        let wholesaleCost = 0;
-        let itemName = 'Unknown Item';
-        
-        if (transaction.linkedInventoryId) {
-          // Direct link to inventory
-          const inventoryItem = inventory.find(item => item.id === transaction.linkedInventoryId);
-          if (inventoryItem) {
-            wholesaleCost = inventoryItem.wholesalePrice || inventoryItem.unitPrice;
-            itemName = inventoryItem.name;
-          }
+            const inventoryItem = inventory.find(inv => inv.id === itemId);
+            if (inventoryItem) {
+              wholesaleCost = inventoryItem.wholesalePrice || inventoryItem.unitPrice;
+              itemName = inventoryItem.name;
+              retailPrice = inventoryItem.unitPrice;
+              itemId = inventoryItem.id;
+            }
+
+            const profit = (retailPrice - wholesaleCost) * qty;
+            totalSales += retailPrice * qty;
+            totalCost += wholesaleCost * qty;
+            totalProfit += profit;
+
+            const itemKey = itemId || itemName;
+            if (!itemsMap[itemKey]) {
+              itemsMap[itemKey] = {
+                id: itemId,
+                name: itemName,
+                sold: 0,
+                retailPrice: retailPrice,
+                wholesalePrice: wholesaleCost,
+                profit: 0
+              };
+            }
+            itemsMap[itemKey].sold += qty;
+            itemsMap[itemKey].profit += profit;
+          });
         } else {
-          // Try to match by amount (approximate matching)
-          const matchingItem = inventory.find(item => 
-            Math.abs(item.unitPrice - saleAmount) < 5 // Allow small difference
-          );
-          if (matchingItem) {
-            wholesaleCost = matchingItem.wholesalePrice || matchingItem.unitPrice;
-            itemName = matchingItem.name;
+          // Single item transaction (legacy)
+          const saleAmount = transaction.amount;
+          totalSales += saleAmount;
+
+          // Try to find matching inventory item
+          let wholesaleCost = 0;
+          let itemName = 'Unknown Item';
+          let retailPrice = saleAmount;
+          let qty = transaction.saleQuantity || 1;
+          let itemId = transaction.linkedInventoryId || null;
+
+          if (transaction.linkedInventoryId) {
+            const inventoryItem = inventory.find(item => item.id === transaction.linkedInventoryId);
+            if (inventoryItem) {
+              wholesaleCost = inventoryItem.wholesalePrice || inventoryItem.unitPrice;
+              itemName = inventoryItem.name;
+              retailPrice = inventoryItem.unitPrice;
+              itemId = inventoryItem.id;
+            }
           } else {
-            // Default to 70% cost if no match (estimate)
-            wholesaleCost = saleAmount * 0.7;
+            const matchingItem = inventory.find(item =>
+              Math.abs(item.unitPrice - saleAmount) < 5
+            );
+            if (matchingItem) {
+              wholesaleCost = matchingItem.wholesalePrice || matchingItem.unitPrice;
+              itemName = matchingItem.name;
+              retailPrice = matchingItem.unitPrice;
+              itemId = matchingItem.id;
+            } else {
+              wholesaleCost = saleAmount * 0.7;
+            }
           }
-        }
 
-        const profit = saleAmount - wholesaleCost;
-        totalCost += wholesaleCost;
-        totalProfit += profit;
+          const profit = (retailPrice - wholesaleCost) * qty;
+          totalCost += wholesaleCost * qty;
+          totalProfit += profit;
 
-        // Track by item
-        if (!itemsMap[itemName]) {
-          itemsMap[itemName] = {
-            name: itemName,
-            sold: 0,
-            retailPrice: saleAmount,
-            wholesalePrice: wholesaleCost,
-            profit: 0
-          };
+          // Use itemId as key if available, else fallback to itemName
+          const itemKey = itemId || itemName;
+          if (!itemsMap[itemKey]) {
+            itemsMap[itemKey] = {
+              id: itemId,
+              name: itemName,
+              sold: 0,
+              retailPrice: retailPrice,
+              wholesalePrice: wholesaleCost,
+              profit: 0
+            };
+          }
+          itemsMap[itemKey].sold += qty;
+          itemsMap[itemKey].profit += profit;
         }
-        
-        itemsMap[itemName].sold += 1;
-        itemsMap[itemName].profit += profit;
       });
 
       const margin = totalSales > 0 ? (totalProfit / totalSales) * 100 : 0;
@@ -91,7 +135,7 @@ export const ProfitReportStorage = {
         margin: Number(margin.toFixed(1)),
         items: Object.values(itemsMap),
         transactionCount: todaysTransactions.length,
-        bestSellingItem: Object.values(itemsMap).reduce((best, current) => 
+        bestSellingItem: Object.values(itemsMap).reduce((best, current) =>
           current.sold > (best?.sold || 0) ? current : best, null
         )
       };
@@ -139,11 +183,11 @@ export const ProfitReportStorage = {
       // First try to load existing report
       const reports = await this.loadAllReports();
       const existingReport = reports[date];
-      
+
       if (existingReport) {
         return existingReport;
       }
-      
+
       // If no existing report, generate a new one
       return await this.generateTodaysReport();
     } catch (error) {
@@ -158,7 +202,7 @@ export const ProfitReportStorage = {
       const reports = await this.loadAllReports();
       const oneWeekAgo = new Date();
       oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-      
+
       const weeklyReports = Object.entries(reports)
         .filter(([date]) => new Date(date) >= oneWeekAgo)
         .sort(([dateA], [dateB]) => new Date(dateB) - new Date(dateA))
@@ -177,7 +221,7 @@ export const ProfitReportStorage = {
       const reports = await this.loadAllReports();
       const oneMonthAgo = new Date();
       oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
-      
+
       const monthlyReports = Object.entries(reports)
         .filter(([date]) => new Date(date) >= oneMonthAgo)
         .sort(([dateA], [dateB]) => new Date(dateB) - new Date(dateA))
@@ -195,7 +239,7 @@ export const ProfitReportStorage = {
     try {
       const today = new Date().toISOString().split('T')[0];
       const report = await this.loadReport(today);
-      
+
       if (!report) {
         return {
           todayProfit: 0,
@@ -227,6 +271,17 @@ export const ProfitReportStorage = {
   // Manual refresh of today's report
   async refreshTodaysReport() {
     return await this.generateTodaysReport();
+  },
+
+  // Clear all reports
+  async clearReports() {
+    try {
+      await AsyncStorage.removeItem(PROFIT_REPORTS_KEY);
+      return true;
+    } catch (error) {
+      console.error('Error clearing reports:', error);
+      return false;
+    }
   }
 };
 

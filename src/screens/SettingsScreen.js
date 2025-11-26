@@ -1,24 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Linking
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Modal, Linking
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius } from '../styles/Theme';
 import Card from '../components/Card';
 import {
-  ArrowLeft, Bell, Bot, Volume2, Ban, Building2, Wallet, Clock, Target,
-  Upload, Cloud, Trash2, Info, BookOpen, HelpCircle, Shield
+  ArrowLeft, Bell, Building2, Wallet, Clock,
+  Trash2, Info, BookOpen, HelpCircle, Shield
 } from 'lucide-react-native';
-import PdfExportService from '../services/PdfExportService';
 import TransactionStorage from '../utils/TransactionStorage';
-import { DeviceEventEmitter } from 'react-native'; // <-- removed duplicate Alert import
+import ProfitReportStorage from '../utils/ProfitReportStorage';
+import CreditStorage from '../utils/CreditStorage';
+import { DeviceEventEmitter } from 'react-native';
 
 const SettingsScreen = ({ navigation }) => {
   const [notifications, setNotifications] = useState(true);
-  const [autoTracking, setAutoTracking] = useState(true);
-  const [personalFilter, setPersonalFilter] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const [profile, setProfile] = useState({ name: 'Track Biz User', initials: 'TB' });
+  const [showAbout, setShowAbout] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showRateApp, setShowRateApp] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -27,9 +28,6 @@ const SettingsScreen = ({ navigation }) => {
         if (s) {
           const parsed = JSON.parse(s);
           setNotifications(!!parsed.notifications);
-          setAutoTracking(!!parsed.autoTracking);
-          setPersonalFilter(!!parsed.personalFilter);
-          setSoundEnabled(!!parsed.soundEnabled);
         }
         const p = await AsyncStorage.getItem('profile');
         if (p) {
@@ -47,9 +45,6 @@ const SettingsScreen = ({ navigation }) => {
     try {
       const payload = {
         notifications: next?.notifications ?? notifications,
-        autoTracking: next?.autoTracking ?? autoTracking,
-        personalFilter: next?.personalFilter ?? personalFilter,
-        soundEnabled: next?.soundEnabled ?? soundEnabled,
       };
       await AsyncStorage.setItem('settings', JSON.stringify(payload));
     } catch { }
@@ -58,60 +53,21 @@ const SettingsScreen = ({ navigation }) => {
   const handleClearData = async () => {
     Alert.alert(
       'Clear All Data',
-      'Delete stored transactions and stats? This does not delete SMS on your phone.',
+      'Delete stored transactions and profit margin stats? This does not delete SMS on your phone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Clear',
           style: 'destructive',
           onPress: async () => {
-            const ok = await TransactionStorage.clearTransactions?.();
-            if (ok) {
+            const txOk = await TransactionStorage.clearTransactions?.();
+            const profitOk = await ProfitReportStorage.clearReports?.();
+            if (txOk && profitOk) {
               DeviceEventEmitter.emit('transactions:cleared');
-              const dbg = await TransactionStorage.debugDump?.();
-              console.log('After clear debug:', dbg);
+              DeviceEventEmitter.emit('profit:cleared');
               Alert.alert('Done', 'Stored data cleared');
             } else {
               Alert.alert('Error', 'Failed to clear data');
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleExportData = async () => {
-    Alert.alert(
-      'Export Transactions',
-      'Generate a PDF report of all your transactions?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Export',
-          onPress: async () => {
-            try {
-              const filePath = await PdfExportService.exportTransactionsToPDF();
-              if (filePath) {
-                Alert.alert(
-                  'Export Successful!',
-                  `PDF saved to:\n${filePath}`,
-                  [
-                    { text: 'OK' },
-                    {
-                      text: 'Open',
-                      onPress: () => {
-                        // Open the PDF with default viewer
-                        Linking.openURL(`file://${filePath}`).catch(err =>
-                          console.error('Could not open PDF', err)
-                        );
-                      }
-                    }
-                  ]
-                );
-              }
-            } catch (error) {
-              console.error('Export error:', error);
-              Alert.alert('Error', 'Failed to export PDF');
             }
           }
         }
@@ -143,7 +99,7 @@ const SettingsScreen = ({ navigation }) => {
       </View>
       <Switch
         value={value}
-        onValueChange={(v) => { onValueChange(v); saveSettings(); }}
+        onValueChange={(v) => { onValueChange(v); saveSettings({ notifications: v }); }}
         trackColor={{ false: '#d1d5db', true: Colors.primary + '60' }}
         thumbColor={value ? Colors.primary : '#f3f4f6'}
       />
@@ -161,6 +117,7 @@ const SettingsScreen = ({ navigation }) => {
         </TouchableOpacity>
         <Text style={styles.screenTitle}>Settings</Text>
       </View>
+
       {/* Profile */}
       <Card variant="elevated">
         <View style={styles.profileSection}>
@@ -180,7 +137,7 @@ const SettingsScreen = ({ navigation }) => {
         </View>
       </Card>
 
-      {/* General */}
+      {/* General - Only Notifications */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>General</Text>
         <Card variant="elevated">
@@ -191,38 +148,17 @@ const SettingsScreen = ({ navigation }) => {
             value={notifications}
             onValueChange={(v) => { setNotifications(v); saveSettings({ notifications: v }); }}
           />
-          <SettingToggle
-            Icon={Bot}
-            title="Auto Tracking"
-            subtitle="Automatically monitor SMS"
-            value={autoTracking}
-            onValueChange={(v) => { setAutoTracking(v); saveSettings({ autoTracking: v }); }}
-          />
-          <SettingToggle
-            Icon={Volume2}
-            title="Sound"
-            subtitle="Play sound on new transactions"
-            value={soundEnabled}
-            onValueChange={(v) => { setSoundEnabled(v); saveSettings({ soundEnabled: v }); }}
-          />
-          <SettingToggle
-            Icon={Ban}
-            title="Filter Personal"
-            subtitle="Hide personal transactions"
-            value={personalFilter}
-            onValueChange={(v) => { setPersonalFilter(v); saveSettings({ personalFilter: v }); }}
-          />
         </Card>
       </View>
 
-      {/* Business */}
+      {/* Business - Streamlined */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Business</Text>
         <Card variant="elevated">
           <SettingItem
             Icon={Building2}
             title="Business Profile"
-            subtitle="Type, peak hours, notes"
+            subtitle="Name, type, and business information"
             onPress={() => navigation.navigate('BusinessProfile')}
           />
           <SettingItem
@@ -237,33 +173,111 @@ const SettingsScreen = ({ navigation }) => {
             subtitle="Set your opening and closing times"
             onPress={() => navigation.navigate('BusinessHours')}
           />
-          <SettingItem
-            Icon={Target}
-            title="Sales Target"
-            subtitle="Set optional monthly goal"
-            onPress={() => navigation.navigate('SalesTarget')}
-          />
         </Card>
       </View>
 
-      {/* Data & About */}
+      {/* Data & About - Streamlined */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Data & About</Text>
         <Card variant="elevated">
           <SettingItem
-            Icon={Upload}
-            title="Export Data"
-            subtitle="Download your transactions as PDF"
-            onPress={handleExportData}
+            Icon={Trash2}
+            title="Clear Data"
+            subtitle="Delete all transactions"
+            onPress={handleClearData}
           />
-          <SettingItem Icon={Cloud} title="Backup & Sync" subtitle="Cloud backup settings" onPress={() => Alert.alert('Backup', 'Coming soon')} />
-          <SettingItem Icon={Trash2} title="Clear Data" subtitle="Delete all transactions" onPress={handleClearData} />
-          <SettingItem Icon={Info} title="About Track Biz" subtitle="Version 1.0.0" onPress={() => Alert.alert('About', 'Track Biz — Smart Business Tracking')} />
-          <SettingItem Icon={BookOpen} title="Help & Support" subtitle="Get help using Track Biz" onPress={() => Alert.alert('Help', 'Help center coming soon!')} />
-          <SettingItem Icon={Shield} title="Privacy Policy" subtitle="Read our privacy policy" onPress={() => Alert.alert('Privacy', 'Coming soon')} />
-          <SettingItem Icon={HelpCircle} title="Rate App" subtitle="Share your feedback" onPress={() => Alert.alert('Rate App', 'Thanks for your support!')} />
+          <SettingItem
+            Icon={Info}
+            title="About Track Biz"
+            subtitle="Version 1.0.0"
+            onPress={() => setShowAbout(true)}
+          />
+          <SettingItem
+            Icon={BookOpen}
+            title="Help & Support"
+            subtitle="Get help using Track Biz"
+            onPress={() => setShowHelp(true)}
+          />
+          <SettingItem
+            Icon={Shield}
+            title="Privacy Policy"
+            subtitle="Read our privacy policy"
+            onPress={() => navigation.navigate('PrivacyPolicy')}
+          />
+          <SettingItem
+            Icon={HelpCircle}
+            title="Rate App"
+            subtitle="Share your feedback"
+            onPress={() => setShowRateApp(true)}
+          />
         </Card>
       </View>
+
+      {/* Modals */}
+      <Modal visible={showAbout} transparent animationType="fade" onRequestClose={() => setShowAbout(false)}>
+        <View style={{
+          flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)'
+        }}>
+          <View style={{
+            backgroundColor: Colors.surface, borderRadius: 16, padding: 24, minWidth: 260, alignItems: 'center'
+          }}>
+            <Text style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>About Track Biz</Text>
+            <Text style={{ marginBottom: 12 }}>Version 1.0.0</Text>
+            <Text style={{ color: Colors.textSecondary, marginBottom: 16 }}>Track Biz helps you manage your business sales and credits easily.</Text>
+            <TouchableOpacity onPress={() => setShowAbout(false)}>
+              <Text style={{ color: Colors.primary, fontWeight: 'bold' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showHelp} transparent animationType="fade" onRequestClose={() => setShowHelp(false)}>
+        <View style={{
+          flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)'
+        }}>
+          <View style={{
+            backgroundColor: Colors.surface, borderRadius: 16, padding: 24, minWidth: 260, alignItems: 'center'
+          }}>
+            <Text style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Help & Support</Text>
+            <Text style={{ marginBottom: 12 }}>Email: support@trackbiz.com</Text>
+            <Text style={{ marginBottom: 16 }}>Phone: +254 XXX XXX XXX</Text>
+            <TouchableOpacity onPress={() => setShowHelp(false)}>
+              <Text style={{ color: Colors.primary, fontWeight: 'bold' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showRateApp} transparent animationType="fade" onRequestClose={() => setShowRateApp(false)}>
+        <View style={{
+          flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)'
+        }}>
+          <View style={{
+            backgroundColor: Colors.surface, borderRadius: 16, padding: 24, minWidth: 260, alignItems: 'center'
+          }}>
+            <Text style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Rate Track Biz</Text>
+            <Text style={{ marginBottom: 12 }}>We appreciate your feedback! Please rate us on the app store.</Text>
+            <TouchableOpacity
+              style={{
+                backgroundColor: Colors.primary,
+                paddingHorizontal: 24,
+                paddingVertical: 12,
+                borderRadius: 8,
+                marginBottom: 12,
+              }}
+              onPress={() => {
+                setShowRateApp(false);
+                Linking.openURL('https://play.google.com/store/apps/details?id=com.trackbiz');
+              }}
+            >
+              <Text style={{ color: Colors.surface, fontWeight: 'bold' }}>Rate on Play Store</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowRateApp(false)}>
+              <Text style={{ color: Colors.primary, fontWeight: 'bold' }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <View style={{ height: 40 }} />
     </ScrollView>

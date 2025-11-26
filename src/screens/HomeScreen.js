@@ -746,7 +746,8 @@ const HomeScreen = ({ navigation, route }) => {
       <AddCashSaleDialog
         visible={showAddSaleDialog}
         onClose={() => setShowAddSaleDialog(false)}
-        onAddSale={handleNewManualSale}   // CHANGED from onSubmit to onAddSale
+        onAddSale={handleNewManualSale}
+        navigation={navigation} // <-- ADD THIS LINE
       />
     </View>
   );
