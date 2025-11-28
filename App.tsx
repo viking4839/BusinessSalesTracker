@@ -1,13 +1,16 @@
 /**
+ * Track Biz App with Integrated Security
  * @format
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Text } from 'react-native';
+import { AppState, View, ActivityIndicator } from 'react-native';
 import { Home as HomeIcon, BarChart3, List, Package } from 'lucide-react-native';
+import SecureStorage from './src/security/SecureStorage';
+import { Colors } from './src/styles/Theme';
 
 // Screens
 import HomeScreen from './src/screens/HomeScreen';
@@ -28,9 +31,15 @@ import CreditManagerScreen from './src/screens/CreditManagerScreen';
 import ProfitMarginReportScreen from './src/screens/ProfitMarginReportScreen';
 import PrivacyPolicy from './src/screens/PrivacyPolicy';
 import RateApp from './src/screens/RateApp';
+import SecurityScreen from './src/screens/SecurityScreen';
+
+// Security Screens
+import PinSetupScreen from './src/screens/PinSetupScreen';
+import PinUnlockScreen from './src/screens/PinUnlockScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
+const RootStack = createNativeStackNavigator();
 
 // Home Stack
 function HomeStack() {
@@ -45,7 +54,7 @@ function HomeStack() {
   );
 }
 
-// New Transactions stack
+// Transactions stack
 function TransactionsStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -55,7 +64,7 @@ function TransactionsStack() {
   );
 }
 
-// NEW: Inventory Stack
+// Inventory Stack
 function InventoryStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -79,80 +88,163 @@ function SettingsStack() {
       <Stack.Screen name="Debug" component={DebugScreen} />
       <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicy} />
       <Stack.Screen name="RateApp" component={RateApp} />
-
+      <Stack.Screen name="Security" component={SecurityScreen} />
     </Stack.Navigator>
   );
 }
 
+// Main App Tabs
+function MainTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: '#007AFF',
+        tabBarInactiveTintColor: '#8E8E93',
+        tabBarStyle: {
+          borderTopWidth: 1,
+          borderTopColor: '#E5E5EA',
+          height: 75,
+          paddingTop: -2,
+          paddingBottom: 12,
+          backgroundColor: '#FFFFFF',
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 3,
+        },
+        tabBarItemStyle: {
+          flex: 1,
+          paddingVertical: 8,
+        },
+        tabBarLabelStyle: {
+          fontSize: 13,
+          fontWeight: '700',
+          marginTop: 4,
+          marginBottom: 2,
+        },
+        tabBarIconStyle: {
+          marginTop: 4,
+        },
+      }}
+    >
+      <Tab.Screen
+        name="Home"
+        component={HomeStack}
+        options={{
+          tabBarLabel: 'Home',
+          tabBarIcon: ({ color }) => <HomeIcon color={color} size={26} strokeWidth={2.5} />,
+        }}
+      />
+      <Tab.Screen
+        name="Analytics"
+        component={AnalyticsScreen}
+        options={{
+          tabBarLabel: 'Analytics',
+          tabBarIcon: ({ color }) => <BarChart3 color={color} size={26} strokeWidth={2.5} />,
+        }}
+      />
+      <Tab.Screen
+        name="Inventory"
+        component={InventoryStack}
+        options={{
+          tabBarLabel: 'Inventory',
+          tabBarIcon: ({ color }) => <Package color={color} size={26} strokeWidth={2.5} />,
+        }}
+      />
+      <Tab.Screen
+        name="Transactions"
+        component={TransactionsStack}
+        options={{
+          tabBarLabel: 'Transactions',
+          tabBarIcon: ({ color }) => <List color={color} size={26} strokeWidth={2.5} />,
+        }}
+      />
+    </Tab.Navigator>
+  );
+}
+
 function App() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [pinRequired, setPinRequired] = useState(false);
+  const [appState, setAppState] = useState(AppState.currentState);
+
+  useEffect(() => {
+    checkSecurityStatus();
+
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (appState.match(/inactive|background/) && nextAppState === 'active') {
+        // App came to foreground
+        checkIfLocked();
+      }
+      setAppState(nextAppState);
+    });
+
+    return () => subscription.remove();
+  }, [appState]);
+
+  const checkSecurityStatus = async () => {
+    try {
+      const pinSet = await SecureStorage.isPinSet();
+
+      if (pinSet) {
+        setPinRequired(true);
+        setIsAuthenticated(false);
+      } else {
+        setPinRequired(false);
+        setIsAuthenticated(true);
+      }
+    } catch (error) {
+      console.error('Security check error:', error);
+      setIsAuthenticated(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const checkIfLocked = async () => {
+    const isLocked = SecureStorage.isLocked();
+    if (isLocked && pinRequired) {
+      setIsAuthenticated(false);
+    }
+  };
+
+  const handleUnlock = () => {
+    setIsAuthenticated(true);
+  };
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background }}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
+
   return (
     <NavigationContainer>
-      <Tab.Navigator
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: '#007AFF',
-          tabBarInactiveTintColor: '#8E8E93',
-          tabBarStyle: {
-            borderTopWidth: 1,
-            borderTopColor: '#E5E5EA',
-            height: 75, // Increased from 65
-            paddingTop: -2, // Increased from 8
-            paddingBottom: 12, // Increased from 8
-            backgroundColor: '#FFFFFF',
-            elevation: 8, // Added shadow for Android
-            shadowColor: '#000', // Added shadow for iOS
-            shadowOffset: { width: 0, height: -2 },
-            shadowOpacity: 0.1,
-            shadowRadius: 3,
-          },
-          tabBarItemStyle: {
-            flex: 1,
-            paddingVertical: 8, // Increased from 6
-          },
-          tabBarLabelStyle: {
-            fontSize: 13, // Increased from 11
-            fontWeight: '700', // Increased from 600
-            marginTop: 4, // Increased from 2
-            marginBottom: 2,
-          },
-          tabBarIconStyle: {
-            marginTop: 4, // Increased from 2
-          },
-        }}
-      >
-        <Tab.Screen
-          name="Home"
-          component={HomeStack}
-          options={{
-            tabBarLabel: 'Home',
-            tabBarIcon: ({ color }) => <HomeIcon color={color} size={26} strokeWidth={2.5} />,
-          }}
-        />
-        <Tab.Screen
-          name="Analytics"
-          component={AnalyticsScreen}
-          options={{
-            tabBarLabel: 'Analytics',
-            tabBarIcon: ({ color }) => <BarChart3 color={color} size={26} strokeWidth={2.5} />,
-          }}
-        />
-        <Tab.Screen
-          name="Inventory"
-          component={InventoryStack}
-          options={{
-            tabBarLabel: 'Inventory',
-            tabBarIcon: ({ color }) => <Package color={color} size={26} strokeWidth={2.5} />,
-          }}
-        />
-        <Tab.Screen
-          name="Transactions"
-          component={TransactionsStack}
-          options={{
-            tabBarLabel: 'Transactions',
-            tabBarIcon: ({ color }) => <List color={color} size={26} strokeWidth={2.5} />,
-          }}
-        />
-      </Tab.Navigator>
+      <RootStack.Navigator screenOptions={{ headerShown: false }}>
+        {!isAuthenticated && pinRequired ? (
+          // Show unlock screen
+          <RootStack.Screen name="PinUnlock">
+            {props => <PinUnlockScreen {...props} onUnlock={handleUnlock} />}
+          </RootStack.Screen>
+        ) : !pinRequired ? (
+          // First time setup - offer PIN setup
+          <>
+            <RootStack.Screen name="Main" component={MainTabs} />
+            <RootStack.Screen name="PinSetup" component={PinSetupScreen} />
+          </>
+        ) : (
+          // Authenticated - show main app
+          <>
+            <RootStack.Screen name="Main" component={MainTabs} />
+            <RootStack.Screen name="PinSetup" component={PinSetupScreen} />
+          </>
+        )}
+      </RootStack.Navigator>
     </NavigationContainer>
   );
 }

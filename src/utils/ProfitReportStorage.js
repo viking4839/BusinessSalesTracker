@@ -24,7 +24,19 @@ export const ProfitReportStorage = {
       // Filter today's business transactions (incoming payments)
       const todaysTransactions = transactions.filter(t => {
         const txDate = new Date(t.timestamp);
-        return txDate >= todayStart && txDate <= todayEnd && t.amount > 0;
+        const isToday = txDate >= todayStart && txDate <= todayEnd && t.amount > 0;
+
+        // ✅ NEW: Exclude SMS transactions with pending inventory matches
+        if (t.source === 'sms_scan' && t.inventoryMatch) {
+          const match = t.inventoryMatch;
+          // Only include if user has confirmed the match
+          if (!match.userConfirmed) {
+            console.log(`⏭️ Skipping unconfirmed transaction: ${t.sender} - Ksh ${t.amount}`);
+            return false;
+          }
+        }
+
+        return isToday;
       });
 
       let totalSales = 0;

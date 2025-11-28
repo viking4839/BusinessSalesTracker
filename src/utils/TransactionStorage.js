@@ -47,9 +47,37 @@ async function debugDump() {
     return { keys, txLength: tx ? tx.length : 0, txSample: tx ? tx.slice(0, 120) : null };
 }
 
+async function updateTransaction(transactionId, updates) {
+  try {
+    const transactions = await loadTransactions();
+    const index = transactions.findIndex(t => t.id === transactionId);
+    
+    if (index === -1) {
+      console.error('Transaction not found:', transactionId);
+      return false;
+    }
+    
+    // Update the transaction
+    transactions[index] = {
+      ...transactions[index],
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
+    
+    await saveTransactions(transactions);
+    console.log('✅ Transaction updated:', transactionId);
+    return true;
+  } catch (error) {
+    console.error('updateTransaction error:', error);
+    return false;
+  }
+}
+
 export default {
     loadTransactions,
     saveTransactions,
     clearTransactions,
-    debugDump
+    debugDump,
+    updateTransaction
+
 };

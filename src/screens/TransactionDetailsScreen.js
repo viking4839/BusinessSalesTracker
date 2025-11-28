@@ -9,74 +9,98 @@ import {
 import Button from '../components/Button';
 import InventoryStorage from '../utils/InventoryStorage';
 import TransactionStorage from '../utils/TransactionStorage';
+// At the top with other imports, add:
+import TransactionInventoryMatcher from '../utils/TransactionInventoryMatcher';
+import ProfitReportStorage from '../utils/ProfitReportStorage';
+import { DeviceEventEmitter } from 'react-native';
 
 const TransactionDetailsScreen = ({ route, navigation }) => {
     const { transaction } = route.params;
     const [localTransaction, setLocalTransaction] = useState(transaction);
     const isIncoming = Number(localTransaction.amount) > 0;
 
-    // Handle confirming a match and updating inventory
     const handleConfirmMatch = async (matchItem, quantity) => {
         try {
-            // Deduct stock
-            const success = await InventoryStorage.adjustQuantity(matchItem.id, -quantity);
-            if (!success) {
-                Alert.alert('Error', 'Failed to update inventory. Item may be out of stock.');
-                return;
-            }
+            console.log('🔗 Confirming match:', matchItem.name, 'x', quantity);
 
-            // Update transaction with linked inventory
+            // Use the new TransactionInventoryMatcher
+            await TransactionInventoryMatcher.confirmMatch(
+                localTransaction,
+                matchItem,
+                quantity
+            );
+
+            // Update local state with the confirmed match
             const updated = {
                 ...localTransaction,
+                inventoryMatch: {
+                    ...localTransaction.inventoryMatch,
+                    userConfirmed: true,
+                    confirmedAt: new Date().toISOString(),
+                    confirmedItem: matchItem,
+                    confirmedQuantity: quantity
+                },
                 linkedInventoryId: matchItem.id,
                 linkedInventoryName: matchItem.name,
                 saleQuantity: quantity,
                 stockDeducted: true,
-                inventoryMatch: localTransaction.inventoryMatch
-                    ? { ...localTransaction.inventoryMatch, userConfirmed: true }
-                    : null,
+                items: [{
+                    id: matchItem.id,
+                    name: matchItem.name,
+                    quantity: quantity,
+                    unitPrice: matchItem.unitPrice,
+                    wholesalePrice: matchItem.wholesalePrice || matchItem.unitPrice,
+                    total: matchItem.unitPrice * quantity
+                }]
             };
 
-            // Save to storage
-            const allTransactions = await TransactionStorage.loadTransactions();
-            const index = allTransactions.findIndex(t => t.id === localTransaction.id);
-            if (index !== -1) {
-                allTransactions[index] = updated;
-                await TransactionStorage.saveTransactions(allTransactions);
-            }
-
             setLocalTransaction(updated);
+
+            // Notify HomeScreen to refresh profit stats
+            DeviceEventEmitter.emit('profitReportUpdated');
+
             Alert.alert(
                 '✅ Linked Successfully',
-                `Inventory updated:\n${matchItem.name} (-${quantity} units)`,
-                [{ text: 'Great!' }]
+                `Transaction linked to ${matchItem.name}\n${quantity} units deducted from inventory\n\nProfit report has been updated!`,
+                [{ text: 'Great!', onPress: () => navigation.goBack() }]
             );
+
         } catch (error) {
             console.error('handleConfirmMatch error:', error);
-            Alert.alert('Error', 'Failed to link inventory');
+            Alert.alert(
+                'Error',
+                error.message || 'Failed to link inventory. Please try again.'
+            );
         }
     };
 
     // Handle dismissing a match suggestion
     const handleDismissMatch = async () => {
         try {
+            console.log('❌ Dismissing match for transaction:', localTransaction.id);
+
+            await TransactionInventoryMatcher.dismissMatch(localTransaction);
+
             const updated = {
                 ...localTransaction,
-                inventoryMatch: localTransaction.inventoryMatch
-                    ? { ...localTransaction.inventoryMatch, userDismissed: true }
-                    : null,
+                inventoryMatch: {
+                    ...localTransaction.inventoryMatch,
+                    userDismissed: true,
+                    dismissedAt: new Date().toISOString()
+                }
             };
 
-            const allTransactions = await TransactionStorage.loadTransactions();
-            const index = allTransactions.findIndex(t => t.id === localTransaction.id);
-            if (index !== -1) {
-                allTransactions[index] = updated;
-                await TransactionStorage.saveTransactions(allTransactions);
-            }
-
             setLocalTransaction(updated);
+
+            Alert.alert(
+                'Match Dismissed',
+                'This suggestion won\'t show again for this transaction.',
+                [{ text: 'OK', onPress: () => navigation.goBack() }]
+            );
+
         } catch (error) {
             console.error('handleDismissMatch error:', error);
+            Alert.alert('Error', 'Failed to dismiss match');
         }
     };
 

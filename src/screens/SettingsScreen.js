@@ -6,7 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius } from '../styles/Theme';
 import Card from '../components/Card';
 import {
-  ArrowLeft, Bell, Building2, Wallet, Clock,
+  ArrowLeft, Bell, Building2, Wallet, Clock, Lock,
   Trash2, Info, BookOpen, HelpCircle, Shield
 } from 'lucide-react-native';
 import TransactionStorage from '../utils/TransactionStorage';
@@ -147,6 +147,12 @@ const SettingsScreen = ({ navigation }) => {
             subtitle="Get alerts for new transactions"
             value={notifications}
             onValueChange={(v) => { setNotifications(v); saveSettings({ notifications: v }); }}
+          />
+          <SettingItem
+            Icon={Lock}
+            title="Security"
+            subtitle="PIN, biometrics, and auto-lock"
+            onPress={() => navigation.navigate('Security')}
           />
         </Card>
       </View>

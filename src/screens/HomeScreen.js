@@ -195,21 +195,23 @@ const HomeScreen = ({ navigation, route }) => {
   };
 
   const handleScanSMS = async () => {
+    await new Promise(resolve => setTimeout(resolve, 100));
     if (permissionStatus !== 'granted') {
-      Alert.alert(
-        'Permission Needed',
-        'Please grant SMS permission to scan messages.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Grant Permission', onPress: requestSMSPermission },
-        ]
-      );
-      return;
+        Alert.alert(
+            'Permission Needed',
+            'Please grant SMS permission to scan messages.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                { 
+                    text: 'Grant Permission', 
+                    onPress: () => setTimeout(requestSMSPermission, 200)
+                },
+            ]
+        );
+        return;
     }
-
     setIsScanning(true);
     console.log('🔍 Starting SMS scan...');
-
     try {
       const scannedTransactions = await SMSReader.scanRecentTransactions(200);
       const normalizedScanned = (scannedTransactions || []).map(normalizeTransaction);
@@ -247,7 +249,9 @@ const HomeScreen = ({ navigation, route }) => {
       }
     } catch (error) {
       console.error('❌ SMS Scan Error:', error);
-      Alert.alert('Error', error.message || 'Failed to scan SMS');
+      if (!error.message?.includes('not attached to an Activity')) {
+        Alert.alert('Error', error.message || 'Failed to scan SMS');
+      }
     } finally {
       setIsScanning(false);
     }
