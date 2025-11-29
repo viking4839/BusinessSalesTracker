@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Modal, TextInput
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Modal, TextInput, ActivityIndicator
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius } from '../styles/Theme';
 import Card from '../components/Card';
 import {
@@ -24,7 +23,9 @@ const SecurityScreen = ({ navigation }) => {
   const [oldPin, setOldPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [showPin, setShowPin] = useState(false);
-  const [step, setStep] = useState(1); // 1: enter, 2: confirm
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [pinError, setPinError] = useState('');
 
   useEffect(() => {
     loadSecurityStatus();
@@ -46,76 +47,127 @@ const SecurityScreen = ({ navigation }) => {
   };
 
   const handleSetPin = async () => {
-    if (pin.length < 4) {
-      Alert.alert('Invalid PIN', 'PIN must be at least 4 digits');
+    // Validate PIN length
+    if (pin.length < 4 || pin.length > 6) {
+      setPinError('PIN must be 4-6 digits');
+      return;
+    }
+
+    // Validate PIN contains only numbers
+    if (!/^\d+$/.test(pin)) {
+      setPinError('PIN must contain only numbers');
       return;
     }
 
     if (step === 1) {
+      // Move to confirmation step
       setStep(2);
       setConfirmPin('');
+      setPinError('');
       return;
     }
 
     if (step === 2) {
       if (pin !== confirmPin) {
-        Alert.alert('PIN Mismatch', 'PINs do not match. Please try again.');
-        setStep(1);
-        setPin('');
+        setPinError('PINs do not match');
         setConfirmPin('');
         return;
       }
 
+      setLoading(true);
+      setPinError('');
+
       try {
-        await SecureStorage.setPin(pin, biometricAvailable);
-        setPinSet(true);
-        setShowPinModal(false);
-        setStep(1);
-        setPin('');
-        setConfirmPin('');
-        Alert.alert('Success', 'PIN set successfully!');
-        loadSecurityStatus();
+        // Run in background to prevent UI blocking
+        setTimeout(async () => {
+          try {
+            const result = await SecureStorage.setPin(pin, biometricAvailable);
+
+            setLoading(false);
+
+            if (result.success) {
+              setPinSet(true);
+              setShowPinModal(false);
+              setStep(1);
+              setPin('');
+              setConfirmPin('');
+
+              Alert.alert(
+                'Success',
+                'PIN set successfully! Your data is now protected.',
+                [{
+                  text: 'OK',
+                  onPress: () => {
+                    loadSecurityStatus();
+                    // Trigger migration in background
+                    SecureStorage.migratePlainData().catch(console.error);
+                  }
+                }]
+              );
+            } else {
+              setPinError(result.error || 'Failed to set PIN');
+            }
+          } catch (error) {
+            setLoading(false);
+            setPinError('Failed to set PIN: ' + error.message);
+          }
+        }, 100); // Small delay to let UI update
       } catch (error) {
-        Alert.alert('Error', 'Failed to set PIN: ' + error.message);
+        setLoading(false);
+        setPinError('An error occurred');
       }
     }
   };
 
   const handleChangePin = async () => {
     if (!oldPin || !newPin) {
-      Alert.alert('Error', 'Please enter both current and new PIN');
+      setPinError('Please enter both current and new PIN');
       return;
     }
 
-    if (newPin.length < 4) {
-      Alert.alert('Invalid PIN', 'New PIN must be at least 4 digits');
+    if (newPin.length < 4 || newPin.length > 6) {
+      setPinError('New PIN must be 4-6 digits');
       return;
     }
 
-    try {
-      const result = await SecureStorage.changePin(oldPin, newPin);
-      if (result.success) {
-        setShowChangePinModal(false);
-        setOldPin('');
-        setNewPin('');
-        Alert.alert('Success', 'PIN changed successfully!');
-        loadSecurityStatus();
-      } else {
-        Alert.alert('Error', result.error);
+    if (!/^\d+$/.test(newPin)) {
+      setPinError('PIN must contain only numbers');
+      return;
+    }
+
+    setLoading(true);
+    setPinError('');
+
+    // Run in background
+    setTimeout(async () => {
+      try {
+        const result = await SecureStorage.changePin(oldPin, newPin);
+
+        setLoading(false);
+
+        if (result.success) {
+          setShowChangePinModal(false);
+          setOldPin('');
+          setNewPin('');
+          Alert.alert('Success', 'PIN changed successfully!');
+          loadSecurityStatus();
+        } else {
+          setPinError(result.error || 'Failed to change PIN');
+        }
+      } catch (error) {
+        setLoading(false);
+        setPinError('Failed to change PIN: ' + error.message);
       }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to change PIN: ' + error.message);
-    }
+    }, 100);
   };
 
   const handleBiometricToggle = async (value) => {
     if (value) {
-      // Enable biometric
       if (!biometricAvailable) {
         Alert.alert('Not Available', 'Biometric authentication is not available on this device');
         return;
       }
-      
+
       try {
         const result = await SecureStorage.enableBiometric();
         if (result.success) {
@@ -128,7 +180,6 @@ const SecurityScreen = ({ navigation }) => {
         Alert.alert('Error', 'Failed to enable biometric: ' + error.message);
       }
     } else {
-      // Disable biometric
       try {
         const result = await SecureStorage.disableBiometric();
         if (result.success) {
@@ -146,7 +197,7 @@ const SecurityScreen = ({ navigation }) => {
   const handleAutoLockChange = (minutes) => {
     setAutoLockMinutes(minutes);
     SecureStorage.setAutoLockDuration(minutes);
-    Alert.alert('Auto-Lock Updated', `App will auto-lock after ${minutes} minutes of inactivity`);
+    Alert.alert('Auto-Lock Updated', `App will ${minutes === 0 ? 'never auto-lock' : `auto-lock after ${minutes} minutes of inactivity`}`);
   };
 
   const handleRemovePin = () => {
@@ -205,23 +256,25 @@ const SecurityScreen = ({ navigation }) => {
     </View>
   );
 
-  const PinInput = ({ value, onChange, placeholder, autoFocus = false }) => (
+  const PinInput = ({ value, onChange, placeholder, autoFocus = false, editable = true }) => (
     <View style={styles.pinInputContainer}>
       <TextInput
-        style={styles.pinInput}
+        style={[styles.pinInput, !editable && styles.pinInputDisabled]}
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}
         placeholderTextColor={Colors.textLight}
-        keyboardType="numeric"
+        keyboardType="number-pad"
         secureTextEntry={!showPin}
         maxLength={6}
         autoFocus={autoFocus}
         textAlign="center"
+        editable={editable && !loading}
       />
       <TouchableOpacity
         style={styles.showPinButton}
         onPress={() => setShowPin(!showPin)}
+        disabled={!editable || loading}
       >
         {showPin ? <EyeOff size={20} color={Colors.textSecondary} /> : <Eye size={20} color={Colors.textSecondary} />}
       </TouchableOpacity>
@@ -258,22 +311,34 @@ const SecurityScreen = ({ navigation }) => {
               Icon={Lock}
               title="Set PIN"
               subtitle="Protect your data with a PIN"
-              onPress={() => setShowPinModal(true)}
+              onPress={() => {
+                setShowPinModal(true);
+                setStep(1);
+                setPin('');
+                setConfirmPin('');
+                setPinError('');
+              }}
             />
           ) : (
             <>
               <SecurityItem
+                Icon={CheckCircle}
+                title="PIN Protection Active"
+                subtitle="Your data is encrypted and secure"
+                rightComponent={<CheckCircle size={20} color={Colors.success} />}
+                onPress={() => { }}
+                showArrow={false}
+              />
+              <SecurityItem
                 Icon={Key}
                 title="Change PIN"
                 subtitle="Update your security PIN"
-                onPress={() => setShowChangePinModal(true)}
-              />
-              <SecurityItem
-                Icon={Lock}
-                title="PIN Protection"
-                subtitle="PIN is enabled"
-                rightComponent={<CheckCircle size={20} color={Colors.success} />}
-                onPress={() => {}}
+                onPress={() => {
+                  setShowChangePinModal(true);
+                  setOldPin('');
+                  setNewPin('');
+                  setPinError('');
+                }}
               />
               <SecurityItem
                 Icon={Shield}
@@ -287,7 +352,7 @@ const SecurityScreen = ({ navigation }) => {
       </View>
 
       {/* Biometric Authentication */}
-      {biometricAvailable && (
+      {biometricAvailable && pinSet && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Biometric Authentication</Text>
           <Card variant="elevated">
@@ -303,42 +368,46 @@ const SecurityScreen = ({ navigation }) => {
       )}
 
       {/* Auto-Lock */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Auto-Lock</Text>
-        <Card variant="elevated">
-          <SecurityItem
-            Icon={Clock}
-            title="Auto-Lock Timer"
-            subtitle={`Lock after ${autoLockMinutes} minutes of inactivity`}
-            onPress={() => {
-              Alert.alert(
-                'Auto-Lock Timer',
-                'Select auto-lock duration:',
-                [
-                  { text: '1 minute', onPress: () => handleAutoLockChange(1) },
-                  { text: '5 minutes', onPress: () => handleAutoLockChange(5) },
-                  { text: '10 minutes', onPress: () => handleAutoLockChange(10) },
-                  { text: '30 minutes', onPress: () => handleAutoLockChange(30) },
-                  { text: 'Never', onPress: () => handleAutoLockChange(0) },
-                  { text: 'Cancel', style: 'cancel' }
-                ]
-              );
-            }}
-          />
-        </Card>
-      </View>
+      {pinSet && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Auto-Lock</Text>
+          <Card variant="elevated">
+            <SecurityItem
+              Icon={Clock}
+              title="Auto-Lock Timer"
+              subtitle={autoLockMinutes === 0 ? 'Never lock automatically' : `Lock after ${autoLockMinutes} minute${autoLockMinutes > 1 ? 's' : ''} of inactivity`}
+              onPress={() => {
+                Alert.alert(
+                  'Auto-Lock Timer',
+                  'Select auto-lock duration:',
+                  [
+                    { text: '1 minute', onPress: () => handleAutoLockChange(1) },
+                    { text: '5 minutes', onPress: () => handleAutoLockChange(5) },
+                    { text: '10 minutes', onPress: () => handleAutoLockChange(10) },
+                    { text: '30 minutes', onPress: () => handleAutoLockChange(30) },
+                    { text: 'Never', onPress: () => handleAutoLockChange(0) },
+                    { text: 'Cancel', style: 'cancel' }
+                  ]
+                );
+              }}
+            />
+          </Card>
+        </View>
+      )}
 
       {/* Security Info */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Security Information</Text>
         <Card variant="elevated">
           <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>Data Encryption</Text>
-            <Text style={styles.infoValue}>AES-256</Text>
+            <Text style={styles.infoLabel}>Status</Text>
+            <Text style={[styles.infoValue, { color: pinSet ? Colors.success : Colors.error }]}>
+              {pinSet ? 'Protected' : 'Not Protected'}
+            </Text>
           </View>
           <View style={styles.infoItem}>
-            <Text style={styles.infoLabel}>PIN Storage</Text>
-            <Text style={styles.infoValue}>PBKDF2 Hashed</Text>
+            <Text style={styles.infoLabel}>Encryption</Text>
+            <Text style={styles.infoValue}>{pinSet ? 'AES-256' : 'None'}</Text>
           </View>
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Biometric Support</Text>
@@ -350,7 +419,12 @@ const SecurityScreen = ({ navigation }) => {
       </View>
 
       {/* Set PIN Modal */}
-      <Modal visible={showPinModal} transparent animationType="slide" onRequestClose={() => setShowPinModal(false)}>
+      <Modal
+        visible={showPinModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !loading && setShowPinModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>
@@ -359,29 +433,46 @@ const SecurityScreen = ({ navigation }) => {
             <Text style={styles.modalSubtitle}>
               {step === 1 ? 'Enter a 4-6 digit PIN' : 'Re-enter your PIN to confirm'}
             </Text>
-            
+
             <PinInput
               value={step === 1 ? pin : confirmPin}
               onChange={step === 1 ? setPin : setConfirmPin}
-              placeholder="Enter PIN"
+              placeholder={step === 1 ? "Enter PIN" : "Confirm PIN"}
               autoFocus={true}
+              editable={!loading}
             />
-            
+
+            {pinError ? (
+              <Text style={styles.errorText}>{pinError}</Text>
+            ) : null}
+
+            {loading && (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={styles.loadingText}>Setting up security...</Text>
+              </View>
+            )}
+
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
                 onPress={() => {
-                  setShowPinModal(false);
-                  setStep(1);
-                  setPin('');
-                  setConfirmPin('');
+                  if (!loading) {
+                    setShowPinModal(false);
+                    setStep(1);
+                    setPin('');
+                    setConfirmPin('');
+                    setPinError('');
+                  }
                 }}
+                disabled={loading}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={[styles.cancelButtonText, loading && styles.disabledText]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.confirmButton]}
+                style={[styles.modalButton, styles.confirmButton, loading && styles.disabledButton]}
                 onPress={handleSetPin}
+                disabled={loading || (step === 1 && pin.length < 4) || (step === 2 && confirmPin.length < 4)}
               >
                 <Text style={styles.confirmButtonText}>
                   {step === 1 ? 'Continue' : 'Set PIN'}
@@ -393,12 +484,17 @@ const SecurityScreen = ({ navigation }) => {
       </Modal>
 
       {/* Change PIN Modal */}
-      <Modal visible={showChangePinModal} transparent animationType="slide" onRequestClose={() => setShowChangePinModal(false)}>
+      <Modal
+        visible={showChangePinModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !loading && setShowChangePinModal(false)}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Change PIN</Text>
             <Text style={styles.modalSubtitle}>Enter your current and new PIN</Text>
-            
+
             <View style={styles.pinInputGroup}>
               <Text style={styles.pinLabel}>Current PIN</Text>
               <PinInput
@@ -406,32 +502,50 @@ const SecurityScreen = ({ navigation }) => {
                 onChange={setOldPin}
                 placeholder="Current PIN"
                 autoFocus={true}
+                editable={!loading}
               />
             </View>
-            
+
             <View style={styles.pinInputGroup}>
               <Text style={styles.pinLabel}>New PIN</Text>
               <PinInput
                 value={newPin}
                 onChange={setNewPin}
                 placeholder="New PIN"
+                editable={!loading}
               />
             </View>
-            
+
+            {pinError ? (
+              <Text style={styles.errorText}>{pinError}</Text>
+            ) : null}
+
+            {loading && (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={styles.loadingText}>Changing PIN...</Text>
+              </View>
+            )}
+
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
                 onPress={() => {
-                  setShowChangePinModal(false);
-                  setOldPin('');
-                  setNewPin('');
+                  if (!loading) {
+                    setShowChangePinModal(false);
+                    setOldPin('');
+                    setNewPin('');
+                    setPinError('');
+                  }
                 }}
+                disabled={loading}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={[styles.cancelButtonText, loading && styles.disabledText]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.confirmButton]}
+                style={[styles.modalButton, styles.confirmButton, loading && styles.disabledButton]}
                 onPress={handleChangePin}
+                disabled={loading || !oldPin || !newPin || newPin.length < 4}
               >
                 <Text style={styles.confirmButtonText}>Change PIN</Text>
               </TouchableOpacity>
@@ -471,11 +585,11 @@ const styles = StyleSheet.create({
     color: Colors.text
   },
   section: { padding: Spacing.md },
-  sectionTitle: { 
-    ...Typography.subheading, 
-    color: Colors.text, 
-    marginBottom: Spacing.sm, 
-    marginLeft: Spacing.xs 
+  sectionTitle: {
+    ...Typography.subheading,
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+    marginLeft: Spacing.xs
   },
   securityItem: {
     flexDirection: 'row',
@@ -499,7 +613,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f8fafc'
   },
   infoLabel: { ...Typography.body, color: Colors.text },
-  infoValue: { ...Typography.caption, color: Colors.textSecondary },
+  infoValue: { ...Typography.caption, color: Colors.textSecondary, fontWeight: '600' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -527,7 +641,7 @@ const styles = StyleSheet.create({
   },
   pinInputContainer: {
     position: 'relative',
-    marginBottom: Spacing.lg
+    marginBottom: Spacing.md
   },
   pinInput: {
     backgroundColor: Colors.background,
@@ -535,10 +649,13 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     borderRadius: BorderRadius.md,
     padding: Spacing.md,
-    fontSize: 18,
+    fontSize: 24,
     color: Colors.text,
-    fontFamily: 'monospace',
+    fontWeight: '600',
     letterSpacing: 8
+  },
+  pinInputDisabled: {
+    opacity: 0.6
   },
   showPinButton: {
     position: 'absolute',
@@ -554,6 +671,23 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: Spacing.xs,
     fontWeight: '500'
+  },
+  errorText: {
+    color: Colors.error,
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: Spacing.md
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.md,
+    gap: Spacing.sm
+  },
+  loadingText: {
+    ...Typography.caption,
+    color: Colors.textSecondary
   },
   modalButtons: {
     flexDirection: 'row',
@@ -582,6 +716,12 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.surface,
     fontWeight: '600'
+  },
+  disabledButton: {
+    opacity: 0.5
+  },
+  disabledText: {
+    opacity: 0.5
   }
 });
 

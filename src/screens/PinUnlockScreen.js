@@ -25,7 +25,7 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
 
   useEffect(() => {
     checkBiometric();
-    
+
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
         // App came to foreground, try biometric if enabled
@@ -57,7 +57,7 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
   const checkBiometric = async () => {
     const enabled = await SecureStorage.isBiometricEnabled();
     setBiometricEnabled(enabled);
-    
+
     // Auto-trigger biometric on mount if enabled
     if (enabled) {
       setTimeout(() => handleBiometricUnlock(), 300);
@@ -66,12 +66,12 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
 
   const handleNumberPress = (num) => {
     if (locked) return;
-    
+
     setError('');
     if (pin.length < 4) {
       const newPin = pin + num;
       setPin(newPin);
-      
+
       if (newPin.length === 4) {
         setTimeout(() => verifyPin(newPin), 200);
       }
@@ -88,7 +88,7 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
 
     try {
       const result = await SecureStorage.unlock(enteredPin);
-      
+
       if (result.success) {
         // Unlock successful
         if (onUnlock) {
@@ -108,7 +108,7 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
         setError(`Wrong PIN (${result.attempts}/${result.maxAttempts} attempts)`);
         Vibration.vibrate([0, 100, 50, 100]);
         setPin('');
-        
+
         if (result.attempts >= 3) {
           Alert.alert(
             'Warning',
@@ -128,11 +128,11 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
 
   const handleBiometricUnlock = async () => {
     if (locked) return;
-    
+
     setLoading(true);
     try {
       const result = await SecureStorage.unlockWithBiometric();
-      
+
       if (result.success) {
         if (onUnlock) {
           onUnlock();
@@ -153,18 +153,45 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
   const handleForgotPin = () => {
     Alert.alert(
       'Forgot PIN?',
-      'To reset your PIN, you will need to clear all app data. This will delete all transactions, inventory, and settings. Continue?',
+      'This will permanently delete ALL your data (transactions, inventory, profits, settings) and reset the app completely.\n\nThere is no way to recover the data after this.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Reset App',
+          text: 'Delete Everything',
           style: 'destructive',
           onPress: async () => {
-            await SecureStorage.resetSecurity();
-            navigation.replace('PinSetup');
-          }
-        }
-      ]
+            try {
+              // 1. Reset security (removes PIN + biometric)
+              await SecureStorage.resetSecurity();
+
+              // 2. DELETE ALL ENCRYPTED DATA
+              const keysToRemove = [
+                META_KEY,
+                TX_KEY,
+                INV_KEY,
+                CREDIT_KEY,
+                PROFIT_KEY,
+                SETTINGS_KEY,
+                PROFILE_KEY,
+                '@biometric_datakey',
+                // Add any other @sec_ keys if you have more
+              ];
+
+              await AsyncStorage.multiRemove(keysToRemove);
+
+              Alert.alert(
+                'Data Deleted',
+                'All data has been permanently erased. The app is now reset.',
+                [{ text: 'OK', onPress: () => navigation.replace('PinSetup') }]
+              );
+            } catch (error) {
+              console.error('Failed to wipe data:', error);
+              Alert.alert('Error', 'Failed to reset app. Please try again.');
+            }
+          },
+        },
+      ],
+      { cancelable: false }
     );
   };
 
@@ -240,7 +267,7 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
         </View>
         <Text style={styles.title}>Enter PIN</Text>
         <Text style={styles.subtitle}>
-          {locked 
+          {locked
             ? `Locked for ${Math.floor(lockTimeRemaining / 60)}:${String(lockTimeRemaining % 60).padStart(2, '0')}`
             : 'Enter your 4-digit PIN to unlock'
           }
@@ -250,7 +277,7 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
       {/* PIN Dots */}
       <View style={styles.pinSection}>
         {renderPinDots()}
-        
+
         {error ? (
           <Text style={styles.errorText}>{error}</Text>
         ) : null}

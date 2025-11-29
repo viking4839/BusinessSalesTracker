@@ -2,7 +2,7 @@
  * Track Biz App with Integrated Security
  * @format
  */
-
+import 'react-native-get-random-values';
 import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
