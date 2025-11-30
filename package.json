@@ -11,8 +11,10 @@
     "postinstall": "patch-package"
   },
   "dependencies": {
+    "@notifee/react-native": "^9.1.8",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/datetimepicker": "^8.5.0",
+    "@react-native-firebase/app": "^23.5.0",
     "@react-native/new-app-screen": "0.82.1",
     "@react-navigation/bottom-tabs": "^7.8.4",
     "@react-navigation/native": "^7.1.20",

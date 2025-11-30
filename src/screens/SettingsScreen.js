@@ -141,13 +141,22 @@ const SettingsScreen = ({ navigation }) => {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>General</Text>
         <Card variant="elevated">
-          <SettingToggle
+          {/*         <SettingToggle
             Icon={Bell}
             title="Notifications"
             subtitle="Get alerts for new transactions"
             value={notifications}
             onValueChange={(v) => { setNotifications(v); saveSettings({ notifications: v }); }}
           />
+ */}
+          {/* ✅ ADD THIS NEW BUTTON */}
+          <SettingItem
+            Icon={Bell}
+            title="Alert Settings"
+            subtitle="Low stock, expiry, and credit alerts"
+            onPress={() => navigation.navigate('NotificationSettings')}
+          />
+
           <SettingItem
             Icon={Lock}
             title="Security"

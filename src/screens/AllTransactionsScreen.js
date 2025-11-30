@@ -13,7 +13,7 @@ import {
     StatusBar,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ArrowDownLeft, ArrowUpRight, Search, X, Download, Calendar, Package } from 'lucide-react-native';
+import { ArrowDownLeft, ArrowUpRight, Search, X, Download, Calendar, Package, Filter, TrendingUp, TrendingDown } from 'lucide-react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import PdfExportService from '../services/PdfExportService';
 
@@ -127,7 +127,7 @@ class AllTransactionsScreenImpl extends React.PureComponent {
             return acc;
         }, { in: 0, out: 0, business: 0, count: 0, net: 0 });
     };
-
+/* 
     handleExport = async (filtered) => {
         const { dateFilter, customDays } = this.state;
 
@@ -155,14 +155,17 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                 }
             ]
         );
-    };
+    }; */
 
     renderSectionHeader = ({ section }) => (
         <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{section.title}</Text>
-            <Text style={styles.sectionCount}>
-                {section.data.length} {section.data.length === 1 ? 'txn' : 'txns'}
-            </Text>
+            <View style={styles.sectionHeaderLeft}>
+                <View style={styles.sectionDot} />
+                <Text style={styles.sectionTitle}>{section.title}</Text>
+            </View>
+            <View style={styles.sectionCountBadge}>
+                <Text style={styles.sectionCount}>{section.data.length}</Text>
+            </View>
         </View>
     );
 
@@ -180,11 +183,14 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                 activeOpacity={0.7}
             >
                 <View style={styles.iconWrapper}>
-                    <View style={[styles.icon, { backgroundColor: Colors.background }]}>
+                    <View style={[
+                        styles.icon,
+                        { backgroundColor: isIn ? '#DCFCE7' : '#FEE2E2' }
+                    ]}>
                         {isIn ? (
-                            <ArrowDownLeft size={16} color={Colors.success} />
+                            <ArrowDownLeft size={18} color={Colors.success} strokeWidth={2.5} />
                         ) : (
-                            <ArrowUpRight size={16} color={Colors.error} />
+                            <ArrowUpRight size={18} color={Colors.error} strokeWidth={2.5} />
                         )}
                     </View>
 
@@ -212,7 +218,7 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                         {hasMatch && (
                             <>
                                 <Text style={styles.dot}>•</Text>
-                                <View style={[styles.bizBadge, { backgroundColor: '#FEF3C7' }]}>
+                                <View style={[styles.bizBadge, { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' }]}>
                                     <Text style={[styles.bizBadgeText, { color: '#F59E0B' }]}>Match</Text>
                                 </View>
                             </>
@@ -223,9 +229,11 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                     </Text>
                 </View>
 
-                <Text style={[styles.amount, { color: isIn ? Colors.success : Colors.error }]}>
-                    {isIn ? '+' : ''} Ksh {Math.abs(Number(item.amount) || 0).toLocaleString()}
-                </Text>
+                <View style={styles.amountContainer}>
+                    <Text style={[styles.amount, { color: isIn ? Colors.success : Colors.error }]}>
+                        {isIn ? '+' : '-'}Ksh {Math.abs(Number(item.amount) || 0).toLocaleString()}
+                    </Text>
+                </View>
             </TouchableOpacity>
         );
     };
@@ -249,13 +257,16 @@ class AllTransactionsScreenImpl extends React.PureComponent {
             <View style={styles.container}>
                 <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
 
-                {/* Themed Header */}
+                {/* Header */}
                 <View style={styles.header}>
-                    <Text style={styles.title}>Transactions</Text>
+                    <View style={styles.headerLeft}>
+                        <Text style={styles.title}>Transactions</Text>
+                        <Text style={styles.subtitle}>{filtered.length} transactions</Text>
+                    </View>
 
                     <View style={styles.headerActions}>
                         <TouchableOpacity
-                            style={styles.searchBtn}
+                            style={styles.headerBtn}
                             onPress={() => this.setState({ searchExpanded: !searchExpanded })}
                         >
                             {searchExpanded ? (
@@ -265,91 +276,102 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                             )}
                         </TouchableOpacity>
 
-                        <TouchableOpacity
-                            style={styles.searchBtn}
+                    {/*     <TouchableOpacity
+                            style={styles.headerBtn}
                             onPress={() => this.handleExport(filtered)}
                         >
                             <Download size={20} color={Colors.primary} />
-                        </TouchableOpacity>
+                        </TouchableOpacity> */}
                     </View>
                 </View>
 
                 {/* Search Bar */}
                 {searchExpanded && (
                     <View style={styles.searchBar}>
-                        <Search size={16} color={Colors.textSecondary} />
+                        <Search size={18} color={Colors.textSecondary} />
                         <TextInput
                             style={styles.searchInput}
                             placeholder="Search by name, bank, or amount..."
                             value={searchQuery}
                             onChangeText={(t) => this.setState({ searchQuery: t })}
                             autoFocus
-                            placeholderTextColor={Colors.textSecondary}
+                            placeholderTextColor={Colors.textLight}
                         />
                         {searchQuery.length > 0 && (
                             <TouchableOpacity onPress={() => this.setState({ searchQuery: '' })}>
-                                <X size={16} color={Colors.textSecondary} />
+                                <X size={18} color={Colors.textSecondary} />
                             </TouchableOpacity>
                         )}
                     </View>
                 )}
 
-                {/* Date Filter Pills */}
-                <View style={styles.dateFilters}>
-                    {['today', 'yesterday', 'week', 'month'].map(val => (
+                {/* Date Filter Chips */}
+                <View style={styles.filtersSection}>
+                    <View style={styles.filterChips}>
+                        {['today', 'yesterday', 'week', 'month'].map(val => (
+                            <TouchableOpacity
+                                key={val}
+                                style={[styles.filterChip, dateFilter === val && styles.filterChipActive]}
+                                onPress={() => this.setState({ dateFilter: val })}
+                            >
+                                <Text style={[styles.filterChipText, dateFilter === val && styles.filterChipTextActive]}>
+                                    {val === 'today' ? 'Today' : val === 'yesterday' ? 'Yesterday' : val === 'week' ? 'Week' : 'Month'}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
                         <TouchableOpacity
-                            key={val}
-                            style={[styles.dateFilterBtn, dateFilter === val && styles.dateFilterBtnActive]}
-                            onPress={() => this.setState({ dateFilter: val })}
+                            style={[styles.filterChip, dateFilter === 'custom' && styles.filterChipActive]}
+                            onPress={() => this.setState({ dateFilter: 'custom', showDatePicker: true })}
                         >
-                            <Text style={[styles.dateFilterText, dateFilter === val && styles.dateFilterTextActive]}>
-                                {val === 'today'
-                                    ? 'Today'
-                                    : val === 'yesterday'
-                                        ? 'Yesterday'
-                                        : val === 'week'
-                                            ? 'Week'
-                                            : 'Month'}
+                            <Calendar size={14} color={dateFilter === 'custom' ? Colors.surface : Colors.text} />
+                            <Text style={[styles.filterChipText, dateFilter === 'custom' && styles.filterChipTextActive]}>
+                                Custom
                             </Text>
                         </TouchableOpacity>
-                    ))}
-                    <TouchableOpacity
-                        style={[styles.dateFilterBtn, dateFilter === 'custom' && styles.dateFilterBtnActive]}
-                        onPress={() => this.setState({ dateFilter: 'custom', showDatePicker: true })}
-                    >
-                        <Calendar size={14} color={dateFilter === 'custom' ? Colors.surface : Colors.text} />
-                        <Text style={[styles.dateFilterText, dateFilter === 'custom' && styles.dateFilterTextActive]}>
-                            Custom
-                        </Text>
-                    </TouchableOpacity>
+                    </View>
                 </View>
 
-                {/* Summary Card */}
-                <View style={styles.summaryCard}>
-                    <View style={styles.summaryRow}>
-                        <View>
-                            <Text style={styles.summaryLabel}>Total In</Text>
-                            <Text style={styles.summaryValue}>Ksh {totals.in.toLocaleString()}</Text>
+                {/* Summary Cards */}
+                <View style={styles.summaryContainer}>
+                    <View style={styles.summaryCard}>
+                        <View style={styles.summaryIconContainer}>
+                            <TrendingUp size={20} color={Colors.success} />
                         </View>
-                        <View>
-                            <Text style={styles.summaryLabel}>Total Out</Text>
-                            <Text style={styles.summaryValue}>Ksh {totals.out.toLocaleString()}</Text>
-                        </View>
-                        <View style={styles.countBadge}>
-                            <Text style={styles.countText}>{totals.count}</Text>
-                            <Text style={styles.countLabel}>Count</Text>
-                        </View>
-                    </View>
-                    <View style={[styles.summaryRow, { marginTop: 8 }]}>
-                        <View>
-                            <Text style={styles.summaryLabel}>Net</Text>
-                            <Text style={[
-                                styles.summaryValue,
-                                { color: totals.net >= 0 ? Colors.success : Colors.error }
-                            ]}>
-                                Ksh {totals.net.toLocaleString()}
+                        <View style={styles.summaryContent}>
+                            <Text style={styles.summaryLabel}>Money In</Text>
+                            <Text style={[styles.summaryValue, { color: Colors.success }]}>
+                                Ksh {totals.in.toLocaleString()}
                             </Text>
                         </View>
+                    </View>
+
+                    <View style={styles.summaryCard}>
+                        <View style={[styles.summaryIconContainer, { backgroundColor: '#FEE2E2' }]}>
+                            <TrendingDown size={20} color={Colors.error} />
+                        </View>
+                        <View style={styles.summaryContent}>
+                            <Text style={styles.summaryLabel}>Money Out</Text>
+                            <Text style={[styles.summaryValue, { color: Colors.error }]}>
+                                Ksh {totals.out.toLocaleString()}
+                            </Text>
+                        </View>
+                    </View>
+                </View>
+
+                {/* Net Balance */}
+                <View style={styles.netBalanceCard}>
+                    <View style={styles.netBalanceLeft}>
+                        <Text style={styles.netLabel}>Net Balance</Text>
+                        <Text style={[
+                            styles.netValue,
+                            { color: totals.net >= 0 ? Colors.success : Colors.error }
+                        ]}>
+                            Ksh {totals.net.toLocaleString()}
+                        </Text>
+                    </View>
+                    <View style={styles.countBadge}>
+                        <Text style={styles.countNumber}>{totals.count}</Text>
+                        <Text style={styles.countLabel}>Total</Text>
                     </View>
                 </View>
 
@@ -366,10 +388,10 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                     >
                         <View style={styles.datePickerModal}>
                             <Text style={styles.datePickerTitle}>Select Time Range</Text>
-                            <Text style={styles.datePickerHint}>Last {customDays} days</Text>
+                            <Text style={styles.datePickerHint}>Choose how many days to view</Text>
 
                             <View style={styles.datePickerActions}>
-                                {[3, 7, 14, 30].map(days => (
+                                {[3, 7, 14, 30, 60, 90].map(days => (
                                     <TouchableOpacity
                                         key={days}
                                         style={styles.datePickerBtn}
@@ -382,7 +404,7 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                                     style={[styles.datePickerBtn, styles.datePickerBtnCancel]}
                                     onPress={() => this.setState({ showDatePicker: false })}
                                 >
-                                    <Text style={[styles.datePickerBtnText, { color: Colors.error }]}>Cancel</Text>
+                                    <Text style={[styles.datePickerBtnText, { color: Colors.text }]}>Cancel</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -395,9 +417,7 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                     keyExtractor={(item, index) => String(item.id || index)}
                     renderSectionHeader={this.renderSectionHeader}
                     renderItem={this.renderItem}
-                    ItemSeparatorComponent={({ leadingItem }) =>
-                        leadingItem ? <View style={styles.sep} /> : null
-                    }
+                    stickySectionHeadersEnabled={false}
                     refreshControl={
                         <RefreshControl
                             refreshing={refreshing}
@@ -406,12 +426,20 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                             tintColor={Colors.primary}
                         />
                     }
-                    contentContainerStyle={filtered.length === 0 ? styles.emptyContainer : undefined}
+                    contentContainerStyle={[
+                        styles.listContent,
+                        filtered.length === 0 && styles.emptyContainer
+                    ]}
                     ListEmptyComponent={
-                        <View style={styles.empty}>
-                            <Text style={styles.emptyTitle}>No transactions</Text>
+                        <View style={styles.emptyState}>
+                            <View style={styles.emptyIconCircle}>
+                                <Filter size={32} color={Colors.textLight} />
+                            </View>
+                            <Text style={styles.emptyTitle}>No transactions found</Text>
                             <Text style={styles.emptySubtitle}>
-                                {this.state.searchQuery ? 'Try a different search' : 'Change date range or filters'}
+                                {searchQuery
+                                    ? 'Try adjusting your search or filters'
+                                    : 'Change the date range to see more transactions'}
                             </Text>
                         </View>
                     }
@@ -432,9 +460,17 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         backgroundColor: Colors.primary,
     },
-    title: { fontSize: 22, fontWeight: '700', color: Colors.surface },
-    headerActions: { flexDirection: 'row', gap: 8 },
-    searchBtn: {
+    headerLeft: {
+        flex: 1,
+    },
+    title: { fontSize: 24, fontWeight: '700', color: Colors.surface },
+    subtitle: {
+        fontSize: 13,
+        color: 'rgba(255, 255, 255, 0.8)',
+        marginTop: 2,
+    },
+    headerActions: { flexDirection: 'row', gap: Spacing.xs },
+    headerBtn: {
         width: 40,
         height: 40,
         borderRadius: BorderRadius.md,
@@ -448,84 +484,155 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.surface,
         marginHorizontal: Spacing.md,
         marginTop: Spacing.sm,
-        marginBottom: Spacing.sm,
-        paddingHorizontal: Spacing.sm,
-        paddingVertical: Spacing.xs,
-        borderRadius: BorderRadius.md,
-        borderWidth: 1,
-        borderColor: Colors.primary,
-        gap: 8,
-    },
-    searchInput: { flex: 1, fontSize: 14, color: Colors.text, padding: 0 },
-    dateFilters: {
-        flexDirection: 'row',
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm,
-        gap: 6,
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1,
+        borderColor: Colors.primary,
+        gap: Spacing.sm,
+        ...Shadows.sm,
+    },
+    searchInput: { flex: 1, fontSize: 14, color: Colors.text, padding: 0 },
+    filtersSection: {
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
         backgroundColor: Colors.background,
     },
-    dateFilterBtn: {
+    filterChips: {
+        flexDirection: 'row',
+        gap: Spacing.xs,
+        flexWrap: 'wrap',
+    },
+    filterChip: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 4,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.xs,
+        borderRadius: 20,
         backgroundColor: Colors.surface,
         borderWidth: 1,
         borderColor: Colors.border,
+        minHeight: 36,
     },
-    dateFilterBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-    dateFilterText: { fontSize: 13, fontWeight: '600', color: Colors.text },
-    dateFilterTextActive: { color: Colors.surface },
-    summaryCard: {
-        backgroundColor: '#b1e9c2ff',
-        marginHorizontal: Spacing.md,
+    filterChipActive: { 
+        backgroundColor: Colors.primary, 
+        borderColor: Colors.primary,
+        ...Shadows.sm,
+    },
+    filterChipText: { fontSize: 13, fontWeight: '600', color: Colors.text },
+    filterChipTextActive: { color: Colors.surface },
+    summaryContainer: {
+        flexDirection: 'row',
+        paddingHorizontal: Spacing.md,
+        gap: Spacing.sm,
         marginBottom: Spacing.sm,
-        borderRadius: BorderRadius.md,
-        padding: Spacing.sm,
+    },
+    summaryCard: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
         borderWidth: 1,
         borderColor: Colors.border,
         ...Shadows.sm,
     },
-    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    summaryLabel: { fontSize: 13, color: Colors.textSecondary, marginBottom: 4 },
-    summaryValue: { fontSize: 18, fontWeight: '700', color: Colors.text },
+    summaryIconContainer: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        backgroundColor: '#DCFCE7',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: Spacing.sm,
+    },
+    summaryContent: {
+        flex: 1,
+    },
+    summaryLabel: { fontSize: 11, color: Colors.textSecondary, marginBottom: 4 },
+    summaryValue: { fontSize: 18, fontWeight: '800', color: Colors.text },
+    netBalanceCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: Colors.surface,
+        marginHorizontal: Spacing.md,
+        marginBottom: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        ...Shadows.sm,
+    },
+    netBalanceLeft: {
+        flex: 1,
+    },
+    netLabel: { fontSize: 12, color: Colors.textSecondary, marginBottom: 4, fontWeight: '500' },
+    netValue: { fontSize: 24, fontWeight: '800' },
     countBadge: {
         backgroundColor: Colors.background,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 8,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.xs,
+        borderRadius: BorderRadius.md,
         alignItems: 'center',
+        minWidth: 60,
     },
-    countText: { fontSize: 16, fontWeight: '700', color: Colors.text },
-    countLabel: { fontSize: 9, color: Colors.textSecondary, marginTop: 2 },
+    countNumber: { fontSize: 20, fontWeight: '800', color: Colors.text },
+    countLabel: { fontSize: 10, color: Colors.textSecondary, marginTop: 2, fontWeight: '500' },
+    listContent: {
+        paddingBottom: Spacing.lg,
+    },
     sectionHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         backgroundColor: Colors.background,
         paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.xs,
+        paddingVertical: Spacing.sm,
+        marginTop: Spacing.xs,
     },
-    sectionTitle: { fontSize: 12, fontWeight: '700', color: Colors.text },
-    sectionCount: { fontSize: 10, color: Colors.textSecondary },
+    sectionHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    sectionDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: Colors.primary,
+    },
+    sectionTitle: { fontSize: 13, fontWeight: '700', color: Colors.text },
+    sectionCountBadge: {
+        backgroundColor: Colors.primary + '20',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 10,
+    },
+    sectionCount: { fontSize: 11, fontWeight: '700', color: Colors.primary },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: Colors.surface,
+        marginHorizontal: Spacing.md,
+        marginVertical: 2,
         paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.md,
+        borderWidth: 1,
+        borderColor: Colors.borderLight,
+        ...Shadows.sm,
     },
-    sep: { height: 1, backgroundColor: Colors.borderLight, marginLeft: Spacing.md + 32 + 8 },
     iconWrapper: {
         position: 'relative',
         marginRight: Spacing.sm,
     },
     icon: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        width: 40,
+        height: 40,
+        borderRadius: 12,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -541,44 +648,81 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         borderWidth: 2,
         borderColor: Colors.surface,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.2,
-        shadowRadius: 2,
+        ...Shadows.sm,
     },
     details: { flex: 1, marginRight: Spacing.sm },
-    sender: { fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 3 },
-    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
-    bank: { fontSize: 10, color: Colors.textSecondary },
+    sender: { fontSize: 15, fontWeight: '700', color: Colors.text, marginBottom: 4 },
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+    bank: { fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
     dot: { fontSize: 10, color: Colors.borderLight },
-    bizBadge: { backgroundColor: '#EEF2FF', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3 },
-    bizBadgeText: { fontSize: 8, color: '#4F46E5', fontWeight: '700' },
-    time: { fontSize: 10, color: Colors.textLight },
-    amount: { fontSize: 13, fontWeight: '700' },
-    emptyContainer: { flexGrow: 1, justifyContent: 'center', padding: Spacing.lg },
-    empty: { alignItems: 'center' },
-    emptyTitle: { fontSize: 16, fontWeight: '600', color: Colors.text, marginBottom: 6 },
-    emptySubtitle: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center' },
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+    bizBadge: { 
+        backgroundColor: '#EEF2FF', 
+        paddingHorizontal: 6, 
+        paddingVertical: 2, 
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: '#C7D2FE',
+    },
+    bizBadgeText: { fontSize: 9, color: '#4F46E5', fontWeight: '700' },
+    time: { fontSize: 11, color: Colors.textLight, fontWeight: '500' },
+    amountContainer: {
+        alignItems: 'flex-end',
+    },
+    amount: { fontSize: 16, fontWeight: '800', letterSpacing: -0.5 },
+    emptyContainer: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: Spacing.lg },
+    emptyState: { alignItems: 'center', paddingVertical: Spacing.xxl },
+    emptyIconCircle: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: Colors.background,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+    },
+    emptyTitle: { fontSize: 18, fontWeight: '700', color: Colors.text, marginBottom: Spacing.xs },
+    emptySubtitle: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', maxWidth: 280 },
+    modalOverlay: { 
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.6)', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        padding: Spacing.lg,
+    },
     datePickerModal: {
         backgroundColor: Colors.surface,
-        borderRadius: BorderRadius.lg,
+        borderRadius: BorderRadius.xl,
         padding: Spacing.lg,
-        width: '80%',
-        maxWidth: 300,
+        width: '100%',
+        maxWidth: 320,
+        ...Shadows.lg,
     },
-    datePickerTitle: { fontSize: 16, fontWeight: '700', color: Colors.text, marginBottom: 8, textAlign: 'center' },
-    datePickerHint: { fontSize: 12, color: Colors.textSecondary, marginBottom: Spacing.md, textAlign: 'center' },
-    datePickerActions: { gap: 8 },
+    datePickerTitle: { 
+        fontSize: 18, 
+        fontWeight: '700', 
+        color: Colors.text, 
+        marginBottom: Spacing.xs, 
+        textAlign: 'center' 
+    },
+    datePickerHint: { 
+        fontSize: 13, 
+        color: Colors.textSecondary, 
+        marginBottom: Spacing.lg, 
+        textAlign: 'center' 
+    },
+    datePickerActions: { gap: Spacing.xs },
     datePickerBtn: {
         backgroundColor: Colors.primary,
-        padding: Spacing.sm,
+        paddingVertical: Spacing.md,
         borderRadius: BorderRadius.md,
         alignItems: 'center',
     },
-    datePickerBtnCancel: { backgroundColor: 'transparent', borderWidth: 1, borderColor: Colors.border },
-    datePickerBtnText: { fontSize: 14, fontWeight: '600', color: Colors.surface },
+    datePickerBtnCancel: { 
+        backgroundColor: Colors.background, 
+        borderWidth: 1, 
+        borderColor: Colors.border 
+    },
+    datePickerBtnText: { fontSize: 15, fontWeight: '600', color: Colors.surface },
 });
 
 export default function AllTransactionsScreen(props) {

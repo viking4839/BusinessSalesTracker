@@ -33,6 +33,7 @@ import SMSReader from '../services/SMSReader';
 import TransactionStorage from '../utils/TransactionStorage';
 import CreditStorage from '../utils/CreditStorage';
 import ProfitReportStorage from '../utils/ProfitReportStorage'; // Use your actual filename
+import NotificationService from '../services/NotificationService';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import BankCard from '../components/BankCard';
 import AddCashSaleDialog from '../components/AddCashSaleDialog';
@@ -89,6 +90,16 @@ const HomeScreen = ({ navigation, route }) => {
       loadStoredTransactions();
       loadCreditStats();
       loadProfitStats(); // <-- Add this
+    }, [])
+  );
+
+  // Check alerts on focus
+  useFocusEffect(
+    React.useCallback(() => {
+      const checkAlerts = async () => {
+        await NotificationService.checkAllAlerts();
+      };
+      checkAlerts();
     }, [])
   );
 
@@ -197,18 +208,18 @@ const HomeScreen = ({ navigation, route }) => {
   const handleScanSMS = async () => {
     await new Promise(resolve => setTimeout(resolve, 100));
     if (permissionStatus !== 'granted') {
-        Alert.alert(
-            'Permission Needed',
-            'Please grant SMS permission to scan messages.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                { 
-                    text: 'Grant Permission', 
-                    onPress: () => setTimeout(requestSMSPermission, 200)
-                },
-            ]
-        );
-        return;
+      Alert.alert(
+        'Permission Needed',
+        'Please grant SMS permission to scan messages.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Grant Permission',
+            onPress: () => setTimeout(requestSMSPermission, 200)
+          },
+        ]
+      );
+      return;
     }
     setIsScanning(true);
     console.log('🔍 Starting SMS scan...');

@@ -7,7 +7,8 @@ import {
   Vibration,
   Alert,
   ActivityIndicator,
-  AppState
+  AppState,
+  BackHandler
 } from 'react-native';
 import { Lock, Fingerprint } from 'lucide-react-native';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
@@ -152,46 +153,75 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
 
   const handleForgotPin = () => {
     Alert.alert(
-      'Forgot PIN?',
-      'This will permanently delete ALL your data (transactions, inventory, profits, settings) and reset the app completely.\n\nThere is no way to recover the data after this.',
+      'Forgot PIN? Reset App',
+      '⚠️ WARNING: This will permanently delete ALL your data:\n\n' +
+      '• All transactions (SMS + manual)\n' +
+      '• All inventory items\n' +
+      '• All credit/deni records\n' +
+      '• All profit reports\n' +
+      '• Business settings\n' +
+      '• Your PIN and security settings\n\n' +
+      '❌ This action CANNOT be undone!\n\n' +
+      'The app will be reset to factory state.',
       [
-        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
         {
           text: 'Delete Everything',
           style: 'destructive',
           onPress: async () => {
-            try {
-              // 1. Reset security (removes PIN + biometric)
-              await SecureStorage.resetSecurity();
+            // Double confirmation
+            Alert.alert(
+              'Are You Absolutely Sure?',
+              'This is your last chance to cancel.\n\nAll data will be permanently erased.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Yes, Delete All',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setLoading(true);
+                    try {
+                      // Use the new wipeAllData method
+                      const result = await SecureStorage.wipeAllData();
 
-              // 2. DELETE ALL ENCRYPTED DATA
-              const keysToRemove = [
-                META_KEY,
-                TX_KEY,
-                INV_KEY,
-                CREDIT_KEY,
-                PROFIT_KEY,
-                SETTINGS_KEY,
-                PROFILE_KEY,
-                '@biometric_datakey',
-                // Add any other @sec_ keys if you have more
-              ];
-
-              await AsyncStorage.multiRemove(keysToRemove);
-
-              Alert.alert(
-                'Data Deleted',
-                'All data has been permanently erased. The app is now reset.',
-                [{ text: 'OK', onPress: () => navigation.replace('PinSetup') }]
-              );
-            } catch (error) {
-              console.error('Failed to wipe data:', error);
-              Alert.alert('Error', 'Failed to reset app. Please try again.');
-            }
+                      if (result.success) {
+                        setLoading(false);
+                        Alert.alert(
+                          '✅ Data Deleted',
+                          'All data has been permanently erased.\n\nThe app will now close. Please reopen it to start fresh.',
+                          [{
+                            text: 'OK',
+                            onPress: () => {
+                              // Close the app
+                              BackHandler.exitApp();
+                            }
+                          }],
+                          { cancelable: false }
+                        );
+                      } else {
+                        throw new Error(result.error || 'Failed to wipe data');
+                      }
+                    } catch (error) {
+                      console.error('Wipe data error:', error);
+                      setLoading(false);
+                      Alert.alert(
+                        'Error',
+                        'Failed to reset app. Please try again or contact support.',
+                        [{ text: 'OK' }]
+                      );
+                    }
+                  }
+                }
+              ],
+              { cancelable: false }
+            );
           },
         },
       ],
-      { cancelable: false }
+      { cancelable: true }
     );
   };
 
@@ -287,20 +317,25 @@ const PinUnlockScreen = ({ navigation, onUnlock }) => {
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Unlocking...</Text>
+          <Text style={styles.loadingText}>
+            {pin.length === 4 ? 'Unlocking...' : 'Processing...'}
+          </Text>
         </View>
       ) : (
         renderNumpad()
       )}
 
       {/* Forgot PIN */}
-      <TouchableOpacity
-        style={styles.forgotButton}
-        onPress={handleForgotPin}
-        disabled={loading}
-      >
-        <Text style={styles.forgotButtonText}>Forgot PIN?</Text>
-      </TouchableOpacity>
+      {!loading && (
+        <TouchableOpacity
+          style={styles.forgotButton}
+          onPress={handleForgotPin}
+          disabled={loading}
+        >
+          <Text style={styles.forgotButtonText}>Forgot PIN?</Text>
+          <Text style={styles.forgotButtonSubtext}>⚠️ Will delete all data</Text>
+        </TouchableOpacity>
+      )}
 
       {/* App Info */}
       <View style={styles.footer}>
@@ -431,6 +466,12 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.primary,
     fontWeight: '600',
+    marginBottom: 4,
+  },
+  forgotButtonSubtext: {
+    ...Typography.caption,
+    color: Colors.textSecondary,
+    fontSize: 10,
   },
   footer: {
     position: 'absolute',

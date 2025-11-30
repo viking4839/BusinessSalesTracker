@@ -11,6 +11,7 @@ import { AppState, View, ActivityIndicator } from 'react-native';
 import { Home as HomeIcon, BarChart3, List, Package } from 'lucide-react-native';
 import SecureStorage from './src/security/SecureStorage';
 import { Colors } from './src/styles/Theme';
+import NotificationService from './src/services/NotificationService';
 
 // Screens
 import HomeScreen from './src/screens/HomeScreen';
@@ -32,10 +33,10 @@ import ProfitMarginReportScreen from './src/screens/ProfitMarginReportScreen';
 import PrivacyPolicy from './src/screens/PrivacyPolicy';
 import RateApp from './src/screens/RateApp';
 import SecurityScreen from './src/screens/SecurityScreen';
-
-// Security Screens
 import PinSetupScreen from './src/screens/PinSetupScreen';
 import PinUnlockScreen from './src/screens/PinUnlockScreen';
+import NotificationSettingsScreen from './src/screens/NotificationSettingsScreen';
+
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -89,6 +90,7 @@ function SettingsStack() {
       <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicy} />
       <Stack.Screen name="RateApp" component={RateApp} />
       <Stack.Screen name="Security" component={SecurityScreen} />
+      <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} options={{ headerShown: false }}/>
     </Stack.Navigator>
   );
 }
@@ -184,6 +186,15 @@ function App() {
 
     return () => subscription.remove();
   }, [appState]);
+
+  useEffect(() => {
+    // Initialize notifications on app startup
+    const initNotifications = async () => {
+      await NotificationService.initialize();
+      await NotificationService.checkAllAlerts();
+    };
+    initNotifications();
+  }, []);
 
   const checkSecurityStatus = async () => {
     try {

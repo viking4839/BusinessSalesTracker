@@ -62,8 +62,12 @@ const asyncCrypto = {
     },
 
     randomHex(length) {
-        // Generate length/2 bytes (since hex is 2 chars per byte) and convert to hex string
-        return CryptoJS.lib.WordArray.random(length / 2).toString(CryptoJS.enc.Hex);
+        const chars = '0123456789abcdef';
+        let result = '';
+        for (let i = 0; i < length; i++) {
+            result += chars[Math.floor(Math.random() * chars.length)];
+        }
+        return result;
     }
 };
 
@@ -536,6 +540,38 @@ class SecureStorage {
         this.dataKey = null;
         this.locked = true;
         this.stopAutoLock();
+    }
+
+    async wipeAllData() {
+        // Complete data wipe - for "Forgot PIN" scenario
+        try {
+            const keysToRemove = [
+                META_KEY,
+                TX_KEY,
+                INV_KEY,
+                CREDIT_KEY,
+                PROFIT_KEY,
+                SETTINGS_KEY,
+                PROFILE_KEY,
+                '@biometric_datakey',
+                '@transactions', // Plain data (in case migration wasn't complete)
+                '@inventory',
+                '@credits',
+                'settings',
+                'profile'
+            ];
+
+            await AsyncStorage.multiRemove(keysToRemove);
+            this.dataKey = null;
+            this.locked = true;
+            this.stopAutoLock();
+
+            console.log('✅ All data wiped successfully');
+            return { success: true };
+        } catch (error) {
+            console.error('❌ Wipe data error:', error);
+            return { success: false, error: error.message };
+        }
     }
 
     async getSecurityStatus() {

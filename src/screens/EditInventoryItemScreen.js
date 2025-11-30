@@ -14,6 +14,7 @@ import { ArrowLeft, Trash2, Plus, Minus, Calendar, TrendingUp } from 'lucide-rea
 import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import InventoryStorage from '../utils/InventoryStorage';
+import NotificationService from '../services/NotificationService';
 import { Colors, Spacing, BorderRadius, Typography, Shadows } from '../styles/Theme';
 
 const EditInventoryItemScreen = ({ route, navigation }) => {
@@ -83,10 +84,10 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
 
         const retail = Number(unitPrice);
         const wholesale = Number(wholesalePrice);
-        
+
         if (wholesale >= retail) {
             Alert.alert(
-                'Low Profit Margin', 
+                'Low Profit Margin',
                 'Wholesale price is higher than retail price. This item will be sold at a loss.',
                 [
                     { text: 'Cancel', style: 'cancel' },
@@ -199,10 +200,16 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
         );
     };
 
-    const adjustQuantity = (delta) => {
+    const adjustQuantity = async (delta) => {
         const current = Number(quantity) || 0;
         const newQty = Math.max(0, current + delta);
         setQuantity(String(newQty));
+
+        // Check if low stock after adjustment
+        const threshold = Number(lowStockThreshold) || 5;
+        if (newQty <= threshold) {
+            await NotificationService.notifyLowStock(name, newQty, threshold);
+        }
     };
 
     const handleDateChange = (event, selectedDate) => {

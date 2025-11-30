@@ -10,10 +10,11 @@ import {
     Animated,
     StatusBar,
 } from 'react-native';
-import { Plus, Search, X } from 'lucide-react-native';
+import { Plus, Search, X, Package, TrendingDown, Calendar, AlertTriangle } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import AddInventoryItemDialog from '../components/AddInventoryItemDialog';
 import InventoryStorage from '../utils/InventoryStorage';
+import NotificationService from '../services/NotificationService';
 import { Colors, Spacing, BorderRadius } from '../styles/Theme';
 
 const InventoryScreen = ({ navigation, route }) => {
@@ -28,22 +29,23 @@ const InventoryScreen = ({ navigation, route }) => {
 
     useFocusEffect(
         useCallback(() => {
-            console.log('📍 InventoryScreen focused - reloading data');
+            console.log('📦 InventoryScreen focused - reloading data');
             loadAll();
         }, [])
     );
 
     const loadAll = async () => {
         try {
-            console.log('🔄 Loading inventory from storage...');
             const items = await InventoryStorage.loadInventory();
-            console.log('✅ Loaded items:', items.length, items);
-            setInventory(items || []);
+            setInventory(items);
 
             const catList = await InventoryStorage.loadCategories();
             if (catList && catList.length) {
                 setCategories(['All', ...catList]);
             }
+
+            // Check for low stock and expiry alerts
+            await NotificationService.checkInventoryAlerts();
         } catch (e) {
             console.error('❌ Inventory load error', e);
         }
@@ -76,7 +78,7 @@ const InventoryScreen = ({ navigation, route }) => {
 
     const filteredInventory = inventory.filter(item => {
         const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
-        const matchesSearch = !searchQuery || 
+        const matchesSearch = !searchQuery ||
             item.name.toLowerCase().includes(searchQuery.toLowerCase());
         return matchesCategory && matchesSearch;
     });
@@ -90,6 +92,29 @@ const InventoryScreen = ({ navigation, route }) => {
         loadAll();
     };
 
+    // Helper functions for item status
+    const isLowStock = (item) => {
+        return item.quantity <= (item.lowStockThreshold || 5);
+    };
+
+    const isExpiringSoon = (item) => {
+        if (!item.expiryDate) return false;
+        const daysUntilExpiry = Math.ceil((new Date(item.expiryDate) - new Date()) / (1000 * 60 * 60 * 24));
+        return daysUntilExpiry <= 7 && daysUntilExpiry >= 0;
+    };
+
+    const isExpired = (item) => {
+        if (!item.expiryDate) return false;
+        return new Date(item.expiryDate) < new Date();
+    };
+
+    const getStockStatus = (item) => {
+        if (isExpired(item)) return 'expired';
+        if (isExpiringSoon(item)) return 'expiring';
+        if (isLowStock(item)) return 'low';
+        return 'good';
+    };
+
     const renderAddCard = () => (
         <TouchableOpacity
             style={[styles.gridCard, styles.addCard]}
@@ -98,9 +123,10 @@ const InventoryScreen = ({ navigation, route }) => {
         >
             <View style={styles.addCardContent}>
                 <View style={styles.addIconCircle}>
-                    <Plus size={32} color={Colors.primary} strokeWidth={2.5} />
+                    <Plus size={28} color={Colors.primary} strokeWidth={2.5} />
                 </View>
-                <Text style={styles.addCardText}>Add Stock</Text>
+                <Text style={styles.addCardText}>Add Item</Text>
+                <Text style={styles.addCardSubtext}>Track new stock</Text>
             </View>
         </TouchableOpacity>
     );
@@ -111,30 +137,93 @@ const InventoryScreen = ({ navigation, route }) => {
         }
 
         const actualItem = filteredInventory[index - 1];
-        
+        const status = getStockStatus(actualItem);
+
+        // Determine card color based on status
+        let cardColor = '#FFFFFF'; // Default white
+        let borderColor = Colors.border;
+
+        if (status === 'expired') {
+            cardColor = '#FEE2E2'; // Light red
+            borderColor = '#FCA5A5';
+        } else if (status === 'expiring') {
+            cardColor = '#FEF3C7'; // Light yellow
+            borderColor = '#FCD34D';
+        } else if (status === 'low') {
+            cardColor = '#FFEDD5'; // Light orange
+            borderColor = '#FDBA74';
+        }
+
         return (
             <TouchableOpacity
-                style={styles.gridCard}
+                style={[styles.gridCard, { backgroundColor: cardColor, borderColor }]}
                 activeOpacity={0.85}
                 onPress={() => navigation.navigate('EditInventoryItem', { item: actualItem })}
                 onLongPress={() => handleDeleteItem(actualItem)}
             >
+                {/* Status Badge */}
+                {status !== 'good' && (
+                    <View style={[
+                        styles.statusBadge,
+                        status === 'expired' && styles.expiredBadge,
+                        status === 'expiring' && styles.expiringBadge,
+                        status === 'low' && styles.lowBadge,
+                    ]}>
+                        {status === 'low' && <TrendingDown size={10} color="#FFFFFF" />}
+                        {(status === 'expiring' || status === 'expired') && <Calendar size={10} color="#FFFFFF" />}
+                    </View>
+                )}
+
+                {/* Item Icon */}
+      
+
+                {/* Item Name */}
                 <Text numberOfLines={2} style={styles.gridName}>{actualItem.name}</Text>
 
-                <View style={styles.gridRow}>
-                    <Text style={styles.gridLabel}>Qty</Text>
-                    <Text style={styles.gridValue}>{actualItem.quantity}</Text>
-                </View>
-                <View style={styles.gridRow}>
-                    <Text style={styles.gridLabel}>Price</Text>
-                    <Text style={styles.gridValue}>Ksh {actualItem.unitPrice}</Text>
+                {/* Quantity with visual indicator */}
+                <View style={styles.quantitySection}>
+                    <View style={styles.quantityBar}>
+                        <View
+                            style={[
+                                styles.quantityFill,
+                                {
+                                    width: `${Math.min((actualItem.quantity / (actualItem.lowStockThreshold * 3)) * 100, 100)}%`,
+                                    backgroundColor: status === 'low' ? '#F97316' : Colors.success
+                                }
+                            ]}
+                        />
+                    </View>
+                    <View style={styles.quantityRow}>
+                        <Text style={styles.quantityLabel}>Stock:</Text>
+                        <Text style={[
+                            styles.quantityValue,
+                            status === 'low' && { color: '#F97316' }
+                        ]}>
+                            {actualItem.quantity} units
+                        </Text>
+                    </View>
                 </View>
 
+                {/* Price */}
+                <View style={styles.priceRow}>
+                    <Text style={styles.priceLabel}>Price:</Text>
+                    <Text style={styles.priceValue}>Ksh {actualItem.unitPrice.toLocaleString()}</Text>
+                </View>
+
+                {/* Footer with category and expiry */}
                 <View style={styles.gridFooter}>
-                    <Text style={styles.gridCategory}>{actualItem.category}</Text>
+                    <View style={styles.categoryBadge}>
+                        <Text style={styles.categoryText}>{actualItem.category}</Text>
+                    </View>
                     {actualItem.expiryDate && (
-                        <Text style={styles.gridExpiry}>
-                            {new Date(actualItem.expiryDate).toLocaleDateString()}
+                        <Text style={[
+                            styles.gridExpiry,
+                            (status === 'expiring' || status === 'expired') && { color: '#DC2626', fontWeight: '600' }
+                        ]}>
+                            {new Date(actualItem.expiryDate).toLocaleDateString('en-GB', {
+                                day: '2-digit',
+                                month: 'short'
+                            })}
                         </Text>
                     )}
                 </View>
@@ -145,10 +234,15 @@ const InventoryScreen = ({ navigation, route }) => {
     const renderEmpty = () => (
         <View style={styles.emptyContainer}>
             {renderAddCard()}
-            <Text style={styles.emptyText}>No items yet</Text>
-            <Text style={styles.emptySubtext}>Tap "Add Stock" to get started</Text>
+            <Text style={styles.emptyText}>No inventory items yet</Text>
+            <Text style={styles.emptySubtext}>Add your first item to start tracking stock</Text>
         </View>
     );
+
+    // Summary stats
+    const totalItems = inventory.length;
+    const lowStockCount = inventory.filter(item => isLowStock(item)).length;
+    const expiringCount = inventory.filter(item => isExpiringSoon(item) || isExpired(item)).length;
 
     const gridData = [{ id: '__add_card__' }, ...filteredInventory];
 
@@ -156,10 +250,13 @@ const InventoryScreen = ({ navigation, route }) => {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
 
-            {/* Themed Header */}
+            {/* Header */}
             <View style={styles.header}>
-                <Text style={styles.title}>Inventory</Text>
-                
+                <View style={styles.headerLeft}>
+                    <Text style={styles.title}>Inventory</Text>
+                    <Text style={styles.subtitle}>{totalItems} items in stock</Text>
+                </View>
+
                 <Animated.View style={[styles.searchContainer, { width: searchWidth }]}>
                     {searchExpanded ? (
                         <>
@@ -184,6 +281,24 @@ const InventoryScreen = ({ navigation, route }) => {
                 </Animated.View>
             </View>
 
+            {/* Alert Badges (if any issues) */}
+            {(lowStockCount > 0 || expiringCount > 0) && (
+                <View style={styles.alertsContainer}>
+                    {lowStockCount > 0 && (
+                        <View style={styles.alertBadge}>
+                            <TrendingDown size={14} color="#F97316" />
+                            <Text style={styles.alertText}>{lowStockCount} low stock</Text>
+                        </View>
+                    )}
+                    {expiringCount > 0 && (
+                        <View style={[styles.alertBadge, { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' }]}>
+                            <AlertTriangle size={14} color="#F59E0B" />
+                            <Text style={[styles.alertText, { color: '#F59E0B' }]}>{expiringCount} expiring</Text>
+                        </View>
+                    )}
+                </View>
+            )}
+
             {/* Category chips */}
             <View style={styles.filterContainer}>
                 <FlatList
@@ -194,15 +309,15 @@ const InventoryScreen = ({ navigation, route }) => {
                     renderItem={({ item }) => (
                         <TouchableOpacity
                             style={[
-                                styles.filterChipLarge,
-                                selectedCategory === item && styles.filterChipLargeActive,
+                                styles.filterChip,
+                                selectedCategory === item && styles.filterChipActive,
                             ]}
                             onPress={() => setSelectedCategory(item)}
                         >
                             <Text
                                 style={[
-                                    styles.filterTextLarge,
-                                    selectedCategory === item && styles.filterTextLargeActive,
+                                    styles.filterText,
+                                    selectedCategory === item && styles.filterTextActive,
                                 ]}
                             >
                                 {item}
@@ -239,8 +354,6 @@ const InventoryScreen = ({ navigation, route }) => {
     );
 };
 
-const CARD_MIN_HEIGHT = 118;
-
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -255,10 +368,18 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         backgroundColor: Colors.primary,
     },
+    headerLeft: {
+        flex: 1,
+    },
     title: {
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: '700',
         color: Colors.surface,
+    },
+    subtitle: {
+        fontSize: 13,
+        color: 'rgba(255, 255, 255, 0.8)',
+        marginTop: 2,
     },
     searchContainer: {
         flexDirection: 'row',
@@ -284,33 +405,55 @@ const styles = StyleSheet.create({
         color: Colors.text,
         padding: 0,
     },
+    alertsContainer: {
+        flexDirection: 'row',
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
+        gap: Spacing.xs,
+        backgroundColor: Colors.background,
+    },
+    alertBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        backgroundColor: '#FFEDD5',
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#FDBA74',
+    },
+    alertText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#F97316',
+    },
     filterContainer: {
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm,
         backgroundColor: Colors.background,
     },
-    filterChipLarge: {
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.sm,
-        borderRadius: 26,
+    filterChip: {
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.xs,
+        borderRadius: 20,
         backgroundColor: Colors.surface,
         marginRight: Spacing.xs,
         borderWidth: 1,
         borderColor: Colors.border,
-        minHeight: 42,
+        minHeight: 36,
         justifyContent: 'center',
     },
-    filterChipLargeActive: {
+    filterChipActive: {
         backgroundColor: Colors.primary,
         borderColor: Colors.primary,
     },
-    filterTextLarge: {
-        fontSize: 14,
+    filterText: {
+        fontSize: 13,
         fontWeight: '600',
         color: Colors.text,
-        letterSpacing: 0.3,
     },
-    filterTextLargeActive: {
+    filterTextActive: {
         color: Colors.surface,
     },
     gridContainer: {
@@ -324,12 +467,18 @@ const styles = StyleSheet.create({
     },
     gridCard: {
         flexBasis: '48%',
-        backgroundColor: '#d9f7d9ff',
-        borderRadius: BorderRadius.md,
-        padding: Spacing.sm,
-        borderWidth: 1,
+        backgroundColor: Colors.surface,
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+        borderWidth: 1.5,
         borderColor: Colors.border,
-        minHeight: CARD_MIN_HEIGHT,
+        minHeight: 180,
+        position: 'relative',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
     },
     addCard: {
         backgroundColor: Colors.surface,
@@ -350,49 +499,125 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.primary + '15',
         justifyContent: 'center',
         alignItems: 'center',
-    },
-    addCardText: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: Colors.primary,
-        marginTop: Spacing.xs,
-    },
-    gridName: {
-        fontSize: 20.5,
-        fontWeight: '700',
-        color: Colors.text,
-        lineHeight: 17,
         marginBottom: 4,
     },
-    gridRow: {
+    addCardText: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: Colors.primary,
+    },
+    addCardSubtext: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+    },
+    statusBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1,
+    },
+    lowBadge: {
+        backgroundColor: '#F97316',
+    },
+    expiringBadge: {
+        backgroundColor: '#F59E0B',
+    },
+    expiredBadge: {
+        backgroundColor: '#DC2626',
+    },
+  /*   itemIconContainer: {
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        backgroundColor: Colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.sm,
+    }, */
+    gridName: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: Colors.text,
+        lineHeight: 20,
+        marginBottom: Spacing.sm,
+        minHeight: 40,
+    },
+    quantitySection: {
+        marginBottom: Spacing.sm,
+    },
+    quantityBar: {
+        height: 4,
+        backgroundColor: '#E5E7EB',
+        borderRadius: 2,
+        marginBottom: 4,
+        overflow: 'hidden',
+    },
+    quantityFill: {
+        height: '100%',
+        borderRadius: 2,
+    },
+    quantityRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginTop: 2,
+        alignItems: 'center',
     },
-    gridLabel: {
-        fontSize: 13,
+    quantityLabel: {
+        fontSize: 11,
         color: Colors.textSecondary,
         fontWeight: '500',
     },
-    gridValue: {
-        fontSize: 15,
-        fontWeight: '600',
+    quantityValue: {
+        fontSize: 13,
+        fontWeight: '700',
         color: Colors.text,
     },
-    gridFooter: {
-        marginTop: 15,
+    priceRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'flex-end',
+        alignItems: 'center',
+        marginBottom: Spacing.sm,
     },
-    gridCategory: {
-        fontSize: 10.5,
-        fontWeight: '600',
+    priceLabel: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        fontWeight: '500',
+    },
+    priceValue: {
+        fontSize: 15,
+        fontWeight: '700',
         color: Colors.primary,
+    },
+    gridFooter: {
+        marginTop: 'auto',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingTop: Spacing.xs,
+        borderTopWidth: 1,
+        borderTopColor: Colors.borderLight,
+    },
+    categoryBadge: {
+        backgroundColor: Colors.primary + '15',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+    },
+    categoryText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: Colors.primary,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
     },
     gridExpiry: {
         fontSize: 10,
         color: Colors.textSecondary,
+        fontWeight: '500',
     },
     emptyContainer: {
         paddingTop: Spacing.xl,
@@ -400,14 +625,15 @@ const styles = StyleSheet.create({
         gap: Spacing.md,
     },
     emptyText: {
-        fontSize: 15,
-        fontWeight: '600',
+        fontSize: 16,
+        fontWeight: '700',
         color: Colors.text,
         marginTop: Spacing.md,
     },
     emptySubtext: {
         fontSize: 13,
         color: Colors.textSecondary,
+        textAlign: 'center',
     },
 });
 

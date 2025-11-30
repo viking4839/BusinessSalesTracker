@@ -65,6 +65,14 @@ export class CreditStorage {
         credit.status = credit.remainingBalance === 0 ? 'cleared' : 'pending';
         list[idx] = credit;
         await this.saveCredits(list);
+
+        // ✅ NEW: Send payment notification
+        const NotificationService = require('../services/NotificationService').default;
+        await NotificationService.notifyPaymentReceived(
+            credit.customerName,
+            payAmount
+        );
+
         return true;
     }
 

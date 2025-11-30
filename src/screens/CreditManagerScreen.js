@@ -4,6 +4,7 @@ import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import { ArrowLeft, Plus, CheckCircle, AlertTriangle, User, X, Search, DollarSign, Clock } from 'lucide-react-native';
 import CreditStorage from '../utils/CreditStorage';
 import InventoryStorage from '../utils/InventoryStorage';
+import NotificationService from '../services/NotificationService';
 
 const CreditManagerScreen = ({ navigation }) => {
     const [credits, setCredits] = useState([]);
@@ -53,6 +54,9 @@ const CreditManagerScreen = ({ navigation }) => {
     const load = async () => {
         const list = await CreditStorage.loadCredits();
         setCredits(list);
+
+        // Check for overdue credits
+        await NotificationService.checkCreditAlerts();
     };
 
     const loadInventory = async () => {
