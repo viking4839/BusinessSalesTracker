@@ -6,7 +6,7 @@ const { width, height } = Dimensions.get('window');
 const ColorsObject = {
   primaryStart: '#6C63FF',
   primaryEnd: '#059669',
-  primary: '#6C63FF',
+  primary: '#4e48d1ff',
   primaryDark: '#1d4ed8',
   primaryLight: '#3b82f6',
   secondary: '#059669',

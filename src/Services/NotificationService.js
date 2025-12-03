@@ -5,6 +5,7 @@ import CreditStorage from '../utils/CreditStorage';
 
 const CHANNEL_ID = 'trackbiz-alerts';
 const SETTINGS_KEY = '@notification_settings';
+const NOTIFICATION_HISTORY_KEY = '@notification_history';
 
 class NotificationService {
     /**
@@ -14,10 +15,8 @@ class NotificationService {
      */
     static async initialize() {
         try {
-            // Request permission
             await notifee.requestPermission();
 
-            // Create channel
             await notifee.createChannel({
                 id: CHANNEL_ID,
                 name: 'TrackBiz Alerts',
@@ -40,7 +39,7 @@ class NotificationService {
     static async areNotificationsEnabled() {
         try {
             const settings = await AsyncStorage.getItem(SETTINGS_KEY);
-            if (!settings) return true; // Default to enabled
+            if (!settings) return true;
             const parsed = JSON.parse(settings);
             return parsed.enabled !== false;
         } catch (error) {
@@ -91,14 +90,90 @@ class NotificationService {
     }
 
     /**
+     * NOTIFICATION HISTORY TRACKING
+     * Format: { "low_stock_item123": timestamp, "expiry_item456": timestamp, ... }
+     */
+    static async getNotificationHistory() {
+        try {
+            const raw = await AsyncStorage.getItem(NOTIFICATION_HISTORY_KEY);
+            return raw ? JSON.parse(raw) : {};
+        } catch (error) {
+            console.error('Get notification history error:', error);
+            return {};
+        }
+    }
+
+    static async saveNotificationHistory(history) {
+        try {
+            await AsyncStorage.setItem(NOTIFICATION_HISTORY_KEY, JSON.stringify(history));
+        } catch (error) {
+            console.error('Save notification history error:', error);
+        }
+    }
+
+    /**
+     * Check if notification was sent recently (within cooldown period)
+     * @param {string} notificationKey - Unique identifier for the notification
+     * @param {number} cooldownHours - Hours before resending same notification (default: 24)
+     */
+    static async wasNotifiedRecently(notificationKey, cooldownHours = 24) {
+        const history = await this.getNotificationHistory();
+        const lastSent = history[notificationKey];
+
+        if (!lastSent) return false;
+
+        const hoursSinceLastSent = (Date.now() - lastSent) / (1000 * 60 * 60);
+        return hoursSinceLastSent < cooldownHours;
+    }
+
+    /**
+     * Mark notification as sent
+     */
+    static async markNotificationSent(notificationKey) {
+        const history = await this.getNotificationHistory();
+        history[notificationKey] = Date.now();
+
+        // Clean up old entries (older than 7 days)
+        const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        Object.keys(history).forEach(key => {
+            if (history[key] < sevenDaysAgo) {
+                delete history[key];
+            }
+        });
+
+        await this.saveNotificationHistory(history);
+    }
+
+    /**
+     * Clear notification history (useful for testing or manual reset)
+     */
+    static async clearNotificationHistory() {
+        try {
+            await AsyncStorage.removeItem(NOTIFICATION_HISTORY_KEY);
+            console.log('✅ Notification history cleared');
+        } catch (error) {
+            console.error('Clear notification history error:', error);
+        }
+    }
+
+    /**
      * Show notification (internal helper)
      */
-    static async _showNotification(title, body, data = {}) {
+    static async _showNotification(title, body, data = {}, notificationKey = null) {
         const enabled = await this.areNotificationsEnabled();
         if (!enabled) return null;
 
+        // Check if already notified recently (if key provided)
+        if (notificationKey) {
+            const alreadyNotified = await this.wasNotifiedRecently(notificationKey);
+            if (alreadyNotified) {
+                console.log(`⏭️ Skipping duplicate notification: ${notificationKey}`);
+                return null;
+            }
+        }
+
         try {
-            return await notifee.displayNotification({
+            const notificationId = await notifee.displayNotification({
                 title,
                 body,
                 android: {
@@ -110,6 +185,13 @@ class NotificationService {
                 },
                 data,
             });
+
+            // Mark as sent
+            if (notificationKey) {
+                await this.markNotificationSent(notificationKey);
+            }
+
+            return notificationId;
         } catch (error) {
             console.error('Show notification error:', error);
             return null;
@@ -119,21 +201,23 @@ class NotificationService {
     /**
      * LOW STOCK ALERT
      */
-    static async notifyLowStock(itemName, quantity, threshold) {
+    static async notifyLowStock(itemName, quantity, threshold, itemId) {
         const settings = await this.loadSettings();
         if (!settings.enabled || !settings.lowStock) return null;
 
+        const notificationKey = `low_stock_${itemId}`;
         return await this._showNotification(
             '⚠️ Low Stock Alert',
             `${itemName} is running low (${quantity} left, threshold: ${threshold})`,
-            { type: 'low_stock', itemName, quantity }
+            { type: 'low_stock', itemName, quantity, itemId },
+            notificationKey
         );
     }
 
     /**
      * EXPIRY ALERT
      */
-    static async notifyExpiry(itemName, expiryDate, daysUntilExpiry) {
+    static async notifyExpiry(itemName, expiryDate, daysUntilExpiry, itemId) {
         const settings = await this.loadSettings();
         if (!settings.enabled || !settings.expiry) return null;
 
@@ -142,24 +226,28 @@ class NotificationService {
         else if (daysUntilExpiry <= 3) urgency = '🔴 Expires Soon';
         else urgency = '⚠️ Expiry Warning';
 
+        const notificationKey = `expiry_${itemId}_${daysUntilExpiry}`;
         return await this._showNotification(
             urgency,
             `${itemName} expires on ${new Date(expiryDate).toLocaleDateString()} (${daysUntilExpiry} days)`,
-            { type: 'expiry', itemName, expiryDate, daysUntilExpiry }
+            { type: 'expiry', itemName, expiryDate, daysUntilExpiry, itemId },
+            notificationKey
         );
     }
 
     /**
      * CREDIT OVERDUE ALERT
      */
-    static async notifyCreditOverdue(customerName, daysOverdue, amount) {
+    static async notifyCreditOverdue(customerName, daysOverdue, amount, creditId) {
         const settings = await this.loadSettings();
         if (!settings.enabled || !settings.creditOverdue) return null;
 
+        const notificationKey = `credit_overdue_${creditId}`;
         return await this._showNotification(
             '💳 Credit Overdue',
             `${customerName} is overdue by ${daysOverdue} day(s). Balance: Ksh ${amount.toLocaleString()}`,
-            { type: 'credit_overdue', customerName, daysOverdue, amount }
+            { type: 'credit_overdue', customerName, daysOverdue, amount, creditId },
+            notificationKey
         );
     }
 
@@ -170,10 +258,13 @@ class NotificationService {
         const settings = await this.loadSettings();
         if (!settings.enabled || !settings.lowStock) return null;
 
+        // Create a key based on count to avoid spam
+        const notificationKey = `multiple_low_stock_${count}`;
         return await this._showNotification(
             '⚠️ Multiple Low Stock Items',
             `${count} items are running low. Check your inventory.`,
-            { type: 'multiple_low_stock', count }
+            { type: 'multiple_low_stock', count },
+            notificationKey
         );
     }
 
@@ -184,10 +275,12 @@ class NotificationService {
         const settings = await this.loadSettings();
         if (!settings.enabled || !settings.creditOverdue) return null;
 
+        const notificationKey = `multiple_overdue_${count}`;
         return await this._showNotification(
             '💳 Multiple Overdue Credits',
             `${count} customers are overdue. Total: Ksh ${totalAmount.toLocaleString()}`,
-            { type: 'multiple_overdue', count, totalAmount }
+            { type: 'multiple_overdue', count, totalAmount },
+            notificationKey
         );
     }
 
@@ -198,6 +291,7 @@ class NotificationService {
         const settings = await this.loadSettings();
         if (!settings.enabled || !settings.dailySummary) return null;
 
+        // Daily summaries don't need deduplication - they're scheduled
         return await this._showNotification(
             '📊 Daily Summary',
             `Sales: ${salesCount} | Revenue: Ksh ${revenue.toLocaleString()} | Credits: Ksh ${pendingCredits.toLocaleString()}`,
@@ -208,14 +302,16 @@ class NotificationService {
     /**
      * PAYMENT RECEIVED
      */
-    static async notifyPaymentReceived(customerName, amount) {
+    static async notifyPaymentReceived(customerName, amount, creditId) {
         const settings = await this.loadSettings();
         if (!settings.enabled) return null;
 
+        const notificationKey = `payment_${creditId}_${Date.now()}`;
         return await this._showNotification(
             '✅ Payment Received',
             `${customerName} paid Ksh ${amount.toLocaleString()}`,
-            { type: 'payment_received', customerName, amount }
+            { type: 'payment_received', customerName, amount },
+            notificationKey
         );
     }
 
@@ -240,7 +336,7 @@ class NotificationService {
     }
 
     /**
-     * CHECK INVENTORY ALERTS
+     * CHECK INVENTORY ALERTS (with deduplication)
      */
     static async checkInventoryAlerts() {
         try {
@@ -254,7 +350,7 @@ class NotificationService {
 
             const today = new Date();
 
-            items.forEach(item => {
+            for (const item of items) {
                 // Check low stock
                 if (settings.lowStock && item.quantity <= (item.lowStockThreshold || 5)) {
                     lowStockItems.push(item);
@@ -270,12 +366,17 @@ class NotificationService {
                         expiringItems.push({ item, daysUntilExpiry });
                     }
                 }
-            });
+            }
 
-            // Send notifications
+            // Send notifications (with deduplication)
             if (lowStockItems.length === 1) {
                 const item = lowStockItems[0];
-                await this.notifyLowStock(item.name, item.quantity, item.lowStockThreshold || 5);
+                await this.notifyLowStock(
+                    item.name,
+                    item.quantity,
+                    item.lowStockThreshold || 5,
+                    item.id
+                );
             } else if (lowStockItems.length > 1) {
                 await this.notifyMultipleLowStock(lowStockItems.length);
             }
@@ -284,7 +385,12 @@ class NotificationService {
             expiringItems.sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry);
             for (let i = 0; i < Math.min(3, expiringItems.length); i++) {
                 const { item, daysUntilExpiry } = expiringItems[i];
-                await this.notifyExpiry(item.name, item.expiryDate, daysUntilExpiry);
+                await this.notifyExpiry(
+                    item.name,
+                    item.expiryDate,
+                    daysUntilExpiry,
+                    item.id
+                );
             }
 
         } catch (error) {
@@ -293,7 +399,7 @@ class NotificationService {
     }
 
     /**
-     * CHECK CREDIT ALERTS
+     * CHECK CREDIT ALERTS (with deduplication)
      */
     static async checkCreditAlerts() {
         try {
@@ -305,8 +411,8 @@ class NotificationService {
             const today = new Date();
             let overdueCredits = [];
 
-            credits.forEach(credit => {
-                if (credit.status !== 'pending') return;
+            for (const credit of credits) {
+                if (credit.status !== 'pending') continue;
 
                 const createdDate = new Date(credit.dateCreated);
                 const daysOld = Math.floor((today - createdDate) / (1000 * 60 * 60 * 24));
@@ -315,18 +421,19 @@ class NotificationService {
                 if (daysOld > 7) {
                     overdueCredits.push({
                         ...credit,
-                        daysOverdue: daysOld - 7 // Days past the 7-day grace period
+                        daysOverdue: daysOld - 7
                     });
                 }
-            });
+            }
 
-            // Send notifications
+            // Send notifications (with deduplication)
             if (overdueCredits.length === 1) {
                 const credit = overdueCredits[0];
                 await this.notifyCreditOverdue(
                     credit.customerName,
                     credit.daysOverdue,
-                    credit.remainingBalance
+                    credit.remainingBalance,
+                    credit.id
                 );
             } else if (overdueCredits.length > 1) {
                 const totalAmount = overdueCredits.reduce((sum, c) => sum + c.remainingBalance, 0);

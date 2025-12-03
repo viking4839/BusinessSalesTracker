@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -13,49 +13,67 @@ import {
     StatusBar,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ArrowDownLeft, ArrowUpRight, Search, X, Download, Calendar, Package, Filter, TrendingUp, TrendingDown } from 'lucide-react-native';
+import { 
+    ArrowDownLeft, 
+    ArrowUpRight, 
+    Search, 
+    X, 
+    ArrowLeft,
+    Calendar, 
+    Package, 
+    Filter, 
+    TrendingUp, 
+    TrendingDown 
+} from 'lucide-react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
-import PdfExportService from '../services/PdfExportService';
+import { useFocusEffect } from '@react-navigation/native';
 
-class AllTransactionsScreenImpl extends React.PureComponent {
-    state = {
-        transactions: [],
-        refreshing: false,
-        searchExpanded: false,
-        searchQuery: '',
-        dateFilter: 'today',
-        showDatePicker: false,
-        customDays: 7,
-    };
+const AllTransactionsScreen = ({ navigation }) => {
+    const [transactions, setTransactions] = useState([]);
+    const [refreshing, setRefreshing] = useState(false);
+    const [searchExpanded, setSearchExpanded] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [dateFilter, setDateFilter] = useState('today');
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [customDays, setCustomDays] = useState(7);
 
-    componentDidMount() {
-        this.loadTransactions();
-        this.unsubscribeFocus = this.props.navigation?.addListener?.('focus', this.loadTransactions);
-    }
+    // Load transactions on mount and when screen focuses
+    useEffect(() => {
+        loadTransactions();
+    }, []);
 
-    componentWillUnmount() {
-        this.unsubscribeFocus && this.unsubscribeFocus();
-    }
+    useFocusEffect(
+        useCallback(() => {
+            loadTransactions();
+        }, [])
+    );
 
-    loadTransactions = async () => {
+    const loadTransactions = async () => {
         try {
             const data = await AsyncStorage.getItem('transactions');
             const parsed = data ? JSON.parse(data) : [];
-            parsed.sort((a, b) => new Date(b.timestamp || b.date) - new Date(a.timestamp || a.date));
-            this.setState({ transactions: parsed });
+            
+            // Sort by timestamp
+            parsed.sort((a, b) => {
+                const dateA = new Date(a.timestamp || a.date || 0);
+                const dateB = new Date(b.timestamp || b.date || 0);
+                return dateB - dateA;
+            });
+            
+            setTransactions(parsed);
         } catch (e) {
             console.error('Failed to load transactions', e);
+            Alert.alert('Error', 'Failed to load transactions');
         }
     };
 
-    onRefresh = async () => {
-        this.setState({ refreshing: true });
-        await this.loadTransactions();
-        this.setState({ refreshing: false });
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await loadTransactions();
+        setRefreshing(false);
     };
 
-    getDateRange = () => {
-        const { dateFilter, customDays } = this.state;
+    const getDateRange = () => {
         const now = new Date();
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -83,14 +101,11 @@ class AllTransactionsScreenImpl extends React.PureComponent {
         }
     };
 
-    filterTransactions = () => {
-        const { transactions, searchQuery } = this.state;
-        const { start, end } = this.getDateRange();
+    const filterTransactions = () => {
+        const { start, end } = getDateRange();
 
-        let result = transactions;
-
-        result = result.filter(t => {
-            const txDate = new Date(t.timestamp || t.date);
+        let result = transactions.filter(t => {
+            const txDate = new Date(t.timestamp || t.date || 0);
             return txDate >= start && txDate <= end;
         });
 
@@ -99,25 +114,29 @@ class AllTransactionsScreenImpl extends React.PureComponent {
             result = result.filter(t =>
                 (t.sender || '').toLowerCase().includes(q) ||
                 (t.bank || '').toLowerCase().includes(q) ||
-                String(t.amount).includes(q)
+                String(t.amount || '').includes(q)
             );
         }
 
         return result;
     };
 
-    groupByDate = (txns) => {
+    const groupByDate = (txns) => {
         const map = new Map();
         txns.forEach(tx => {
-            const d = new Date(tx.timestamp || tx.date);
-            const key = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            const d = new Date(tx.timestamp || tx.date || 0);
+            const key = d.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            });
             if (!map.has(key)) map.set(key, []);
             map.get(key).push(tx);
         });
         return Array.from(map.entries()).map(([title, data]) => ({ title, data }));
     };
 
-    getTotals = (txns) => {
+    const getTotals = (txns) => {
         return txns.reduce((acc, t) => {
             const amt = Number(t.amount) || 0;
             if (amt > 0) acc.in += amt;
@@ -127,37 +146,8 @@ class AllTransactionsScreenImpl extends React.PureComponent {
             return acc;
         }, { in: 0, out: 0, business: 0, count: 0, net: 0 });
     };
-/* 
-    handleExport = async (filtered) => {
-        const { dateFilter, customDays } = this.state;
 
-        if (filtered.length === 0) {
-            Alert.alert('No Data', 'No transactions to export for selected period');
-            return;
-        }
-
-        const dateText = dateFilter === 'custom' ? `Last_${customDays}_days` : dateFilter;
-
-        Alert.alert(
-            'Export Data',
-            `Export ${filtered.length} transactions (${dateText.replace(/_/g, ' ')})?`,
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Export PDF',
-                    onPress: async () => {
-                        const ok = await PdfExportService.exportTransactionsPdf(
-                            filtered,
-                            `Transactions_${dateText}`
-                        );
-                        if (ok) Alert.alert('Success', 'PDF exported successfully');
-                    }
-                }
-            ]
-        );
-    }; */
-
-    renderSectionHeader = ({ section }) => (
+    const renderSectionHeader = ({ section }) => (
         <View style={styles.sectionHeader}>
             <View style={styles.sectionHeaderLeft}>
                 <View style={styles.sectionDot} />
@@ -169,17 +159,22 @@ class AllTransactionsScreenImpl extends React.PureComponent {
         </View>
     );
 
-    renderItem = ({ item }) => {
-        const isIn = Number(item.amount) > 0;
+    const renderItem = ({ item }) => {
+        const isIn = Number(item.amount || 0) > 0;
 
-        const hasMatch = item.inventoryMatch &&
+        // FIXED: Safer inventory match check
+        const hasMatch = item.inventoryMatch && 
+            typeof item.inventoryMatch === 'object' &&
             !item.inventoryMatch.userConfirmed &&
             !item.inventoryMatch.userDismissed;
 
         return (
             <TouchableOpacity
                 style={styles.row}
-                onPress={() => this.props.navigation.navigate('TransactionDetails', { transaction: item })}
+                onPress={() => {
+                    // FIXED: Use push instead of navigate to avoid stacking issues
+                    navigation.push('TransactionDetails', { transaction: item });
+                }}
                 activeOpacity={0.7}
             >
                 <View style={styles.iconWrapper}>
@@ -215,6 +210,14 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                                 </View>
                             </>
                         )}
+                        {item.source === 'manual' && (
+                            <>
+                                <Text style={styles.dot}>•</Text>
+                                <View style={[styles.bizBadge, { backgroundColor: '#F3F4F6', borderColor: '#D1D5DB' }]}>
+                                    <Text style={[styles.bizBadgeText, { color: '#6B7280' }]}>Manual</Text>
+                                </View>
+                            </>
+                        )}
                         {hasMatch && (
                             <>
                                 <Text style={styles.dot}>•</Text>
@@ -225,7 +228,10 @@ class AllTransactionsScreenImpl extends React.PureComponent {
                         )}
                     </View>
                     <Text style={styles.time}>
-                        {new Date(item.timestamp || item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(item.timestamp || item.date || 0).toLocaleTimeString([], { 
+                            hour: '2-digit', 
+                            minute: '2-digit' 
+                        })}
                     </Text>
                 </View>
 
@@ -238,219 +244,219 @@ class AllTransactionsScreenImpl extends React.PureComponent {
         );
     };
 
-    render() {
-        const {
-            refreshing,
-            searchExpanded,
-            searchQuery,
-            dateFilter,
-            showDatePicker,
-            customDays,
-        } = this.state;
+    const filtered = filterTransactions();
+    const sections = groupByDate(filtered);
+    const totals = getTotals(filtered);
+    totals.net = totals.in - totals.out;
 
-        const filtered = this.filterTransactions();
-        const sections = this.groupByDate(filtered);
-        const totals = this.getTotals(filtered);
-        totals.net = totals.in - totals.out;
+    return (
+        <View style={styles.container}>
+            <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
 
-        return (
-            <View style={styles.container}>
-                <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
-
-                {/* Header */}
-                <View style={styles.header}>
-                    <View style={styles.headerLeft}>
-                        <Text style={styles.title}>Transactions</Text>
-                        <Text style={styles.subtitle}>{filtered.length} transactions</Text>
-                    </View>
-
-                    <View style={styles.headerActions}>
-                        <TouchableOpacity
-                            style={styles.headerBtn}
-                            onPress={() => this.setState({ searchExpanded: !searchExpanded })}
-                        >
-                            {searchExpanded ? (
-                                <X size={20} color={Colors.primary} />
-                            ) : (
-                                <Search size={20} color={Colors.primary} />
-                            )}
-                        </TouchableOpacity>
-
-                    {/*     <TouchableOpacity
-                            style={styles.headerBtn}
-                            onPress={() => this.handleExport(filtered)}
-                        >
-                            <Download size={20} color={Colors.primary} />
-                        </TouchableOpacity> */}
-                    </View>
+            {/* Header */}
+            <View style={styles.header}>
+                <TouchableOpacity 
+                    style={styles.backButton}
+                    onPress={() => navigation.goBack()}
+                >
+                    <ArrowLeft size={24} color={Colors.surface} />
+                </TouchableOpacity>
+                
+                <View style={styles.headerCenter}>
+                    <Text style={styles.title}>All Transactions</Text>
+                    <Text style={styles.subtitle}>{filtered.length} transactions</Text>
                 </View>
 
-                {/* Search Bar */}
-                {searchExpanded && (
-                    <View style={styles.searchBar}>
-                        <Search size={18} color={Colors.textSecondary} />
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder="Search by name, bank, or amount..."
-                            value={searchQuery}
-                            onChangeText={(t) => this.setState({ searchQuery: t })}
-                            autoFocus
-                            placeholderTextColor={Colors.textLight}
-                        />
-                        {searchQuery.length > 0 && (
-                            <TouchableOpacity onPress={() => this.setState({ searchQuery: '' })}>
-                                <X size={18} color={Colors.textSecondary} />
-                            </TouchableOpacity>
+                <View style={styles.headerActions}>
+                    <TouchableOpacity
+                        style={styles.headerBtn}
+                        onPress={() => setSearchExpanded(!searchExpanded)}
+                    >
+                        {searchExpanded ? (
+                            <X size={20} color={Colors.primary} />
+                        ) : (
+                            <Search size={20} color={Colors.primary} />
                         )}
-                    </View>
-                )}
+                    </TouchableOpacity>
+                </View>
+            </View>
 
-                {/* Date Filter Chips */}
-                <View style={styles.filtersSection}>
-                    <View style={styles.filterChips}>
-                        {['today', 'yesterday', 'week', 'month'].map(val => (
-                            <TouchableOpacity
-                                key={val}
-                                style={[styles.filterChip, dateFilter === val && styles.filterChipActive]}
-                                onPress={() => this.setState({ dateFilter: val })}
-                            >
-                                <Text style={[styles.filterChipText, dateFilter === val && styles.filterChipTextActive]}>
-                                    {val === 'today' ? 'Today' : val === 'yesterday' ? 'Yesterday' : val === 'week' ? 'Week' : 'Month'}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
+            {/* Search Bar */}
+            {searchExpanded && (
+                <View style={styles.searchBar}>
+                    <Search size={18} color={Colors.textSecondary} />
+                    <TextInput
+                        style={styles.searchInput}
+                        placeholder="Search by name, bank, or amount..."
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                        autoFocus
+                        placeholderTextColor={Colors.textLight}
+                    />
+                    {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setSearchQuery('')}>
+                            <X size={18} color={Colors.textSecondary} />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            )}
+
+            {/* Date Filter Chips */}
+            <View style={styles.filtersSection}>
+                <View style={styles.filterChips}>
+                    {['today', 'yesterday', 'week', 'month'].map(val => (
                         <TouchableOpacity
-                            style={[styles.filterChip, dateFilter === 'custom' && styles.filterChipActive]}
-                            onPress={() => this.setState({ dateFilter: 'custom', showDatePicker: true })}
+                            key={val}
+                            style={[styles.filterChip, dateFilter === val && styles.filterChipActive]}
+                            onPress={() => setDateFilter(val)}
                         >
-                            <Calendar size={14} color={dateFilter === 'custom' ? Colors.surface : Colors.text} />
-                            <Text style={[styles.filterChipText, dateFilter === 'custom' && styles.filterChipTextActive]}>
-                                Custom
+                            <Text style={[styles.filterChipText, dateFilter === val && styles.filterChipTextActive]}>
+                                {val === 'today' ? 'Today' : 
+                                 val === 'yesterday' ? 'Yesterday' : 
+                                 val === 'week' ? 'Week' : 'Month'}
                             </Text>
                         </TouchableOpacity>
-                    </View>
+                    ))}
+                    <TouchableOpacity
+                        style={[styles.filterChip, dateFilter === 'custom' && styles.filterChipActive]}
+                        onPress={() => {
+                            setDateFilter('custom');
+                            setShowDatePicker(true);
+                        }}
+                    >
+                        <Calendar size={14} color={dateFilter === 'custom' ? Colors.surface : Colors.text} />
+                        <Text style={[styles.filterChipText, dateFilter === 'custom' && styles.filterChipTextActive]}>
+                            Custom
+                        </Text>
+                    </TouchableOpacity>
                 </View>
+            </View>
 
-                {/* Summary Cards */}
-                <View style={styles.summaryContainer}>
-                    <View style={styles.summaryCard}>
-                        <View style={styles.summaryIconContainer}>
-                            <TrendingUp size={20} color={Colors.success} />
-                        </View>
-                        <View style={styles.summaryContent}>
-                            <Text style={styles.summaryLabel}>Money In</Text>
-                            <Text style={[styles.summaryValue, { color: Colors.success }]}>
-                                Ksh {totals.in.toLocaleString()}
-                            </Text>
-                        </View>
+            {/* Summary Cards */}
+            <View style={styles.summaryContainer}>
+                <View style={styles.summaryCard}>
+                    <View style={styles.summaryIconContainer}>
+                        <TrendingUp size={20} color={Colors.success} />
                     </View>
-
-                    <View style={styles.summaryCard}>
-                        <View style={[styles.summaryIconContainer, { backgroundColor: '#FEE2E2' }]}>
-                            <TrendingDown size={20} color={Colors.error} />
-                        </View>
-                        <View style={styles.summaryContent}>
-                            <Text style={styles.summaryLabel}>Money Out</Text>
-                            <Text style={[styles.summaryValue, { color: Colors.error }]}>
-                                Ksh {totals.out.toLocaleString()}
-                            </Text>
-                        </View>
-                    </View>
-                </View>
-
-                {/* Net Balance */}
-                <View style={styles.netBalanceCard}>
-                    <View style={styles.netBalanceLeft}>
-                        <Text style={styles.netLabel}>Net Balance</Text>
-                        <Text style={[
-                            styles.netValue,
-                            { color: totals.net >= 0 ? Colors.success : Colors.error }
-                        ]}>
-                            Ksh {totals.net.toLocaleString()}
+                    <View style={styles.summaryContent}>
+                        <Text style={styles.summaryLabel}>Money In</Text>
+                        <Text style={[styles.summaryValue, { color: Colors.success }]}>
+                            Ksh {totals.in.toLocaleString()}
                         </Text>
                     </View>
-                    <View style={styles.countBadge}>
-                        <Text style={styles.countNumber}>{totals.count}</Text>
-                        <Text style={styles.countLabel}>Total</Text>
-                    </View>
                 </View>
 
-                {/* Custom Date Range Modal */}
-                <Modal
-                    visible={showDatePicker}
-                    transparent
-                    animationType="fade"
-                    onRequestClose={() => this.setState({ showDatePicker: false })}
-                >
-                    <Pressable
-                        style={styles.modalOverlay}
-                        onPress={() => this.setState({ showDatePicker: false })}
-                    >
-                        <View style={styles.datePickerModal}>
-                            <Text style={styles.datePickerTitle}>Select Time Range</Text>
-                            <Text style={styles.datePickerHint}>Choose how many days to view</Text>
+                <View style={styles.summaryCard}>
+                    <View style={[styles.summaryIconContainer, { backgroundColor: '#FEE2E2' }]}>
+                        <TrendingDown size={20} color={Colors.error} />
+                    </View>
+                    <View style={styles.summaryContent}>
+                        <Text style={styles.summaryLabel}>Money Out</Text>
+                        <Text style={[styles.summaryValue, { color: Colors.error }]}>
+                            Ksh {totals.out.toLocaleString()}
+                        </Text>
+                    </View>
+                </View>
+            </View>
 
-                            <View style={styles.datePickerActions}>
-                                {[3, 7, 14, 30, 60, 90].map(days => (
-                                    <TouchableOpacity
-                                        key={days}
-                                        style={styles.datePickerBtn}
-                                        onPress={() => this.setState({ customDays: days, showDatePicker: false })}
-                                    >
-                                        <Text style={styles.datePickerBtnText}>Last {days} Days</Text>
-                                    </TouchableOpacity>
-                                ))}
+            {/* Net Balance */}
+            <View style={styles.netBalanceCard}>
+                <View style={styles.netBalanceLeft}>
+                    <Text style={styles.netLabel}>Net Balance</Text>
+                    <Text style={[
+                        styles.netValue,
+                        { color: totals.net >= 0 ? Colors.success : Colors.error }
+                    ]}>
+                        Ksh {totals.net.toLocaleString()}
+                    </Text>
+                </View>
+                <View style={styles.countBadge}>
+                    <Text style={styles.countNumber}>{totals.count}</Text>
+                    <Text style={styles.countLabel}>Total</Text>
+                </View>
+            </View>
+
+            {/* Custom Date Range Modal */}
+            <Modal
+                visible={showDatePicker}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowDatePicker(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setShowDatePicker(false)}
+                >
+                    <Pressable style={styles.datePickerModal} onPress={(e) => e.stopPropagation()}>
+                        <Text style={styles.datePickerTitle}>Select Time Range</Text>
+                        <Text style={styles.datePickerHint}>Choose how many days to view</Text>
+
+                        <View style={styles.datePickerActions}>
+                            {[3, 7, 14, 30, 60, 90].map(days => (
                                 <TouchableOpacity
-                                    style={[styles.datePickerBtn, styles.datePickerBtnCancel]}
-                                    onPress={() => this.setState({ showDatePicker: false })}
+                                    key={days}
+                                    style={styles.datePickerBtn}
+                                    onPress={() => {
+                                        setCustomDays(days);
+                                        setShowDatePicker(false);
+                                    }}
                                 >
-                                    <Text style={[styles.datePickerBtnText, { color: Colors.text }]}>Cancel</Text>
+                                    <Text style={styles.datePickerBtnText}>Last {days} Days</Text>
                                 </TouchableOpacity>
-                            </View>
+                            ))}
+                            <TouchableOpacity
+                                style={[styles.datePickerBtn, styles.datePickerBtnCancel]}
+                                onPress={() => setShowDatePicker(false)}
+                            >
+                                <Text style={[styles.datePickerBtnText, { color: Colors.text }]}>Cancel</Text>
+                            </TouchableOpacity>
                         </View>
                     </Pressable>
-                </Modal>
+                </Pressable>
+            </Modal>
 
-                {/* Transaction List */}
-                <SectionList
-                    sections={sections}
-                    keyExtractor={(item, index) => String(item.id || index)}
-                    renderSectionHeader={this.renderSectionHeader}
-                    renderItem={this.renderItem}
-                    stickySectionHeadersEnabled={false}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={refreshing}
-                            onRefresh={this.onRefresh}
-                            colors={[Colors.primary]}
-                            tintColor={Colors.primary}
-                        />
-                    }
-                    contentContainerStyle={[
-                        styles.listContent,
-                        filtered.length === 0 && styles.emptyContainer
-                    ]}
-                    ListEmptyComponent={
-                        <View style={styles.emptyState}>
-                            <View style={styles.emptyIconCircle}>
-                                <Filter size={32} color={Colors.textLight} />
-                            </View>
-                            <Text style={styles.emptyTitle}>No transactions found</Text>
-                            <Text style={styles.emptySubtitle}>
-                                {searchQuery
-                                    ? 'Try adjusting your search or filters'
-                                    : 'Change the date range to see more transactions'}
-                            </Text>
+            {/* Transaction List */}
+            <SectionList
+                sections={sections}
+                keyExtractor={(item, index) => item.id || `transaction-${index}`}
+                renderSectionHeader={renderSectionHeader}
+                renderItem={renderItem}
+                stickySectionHeadersEnabled={false}
+                refreshControl={
+                    <RefreshControl
+                        refreshing={refreshing}
+                        onRefresh={onRefresh}
+                        colors={[Colors.primary]}
+                        tintColor={Colors.primary}
+                    />
+                }
+                contentContainerStyle={[
+                    styles.listContent,
+                    filtered.length === 0 && styles.emptyContainer
+                ]}
+                ListEmptyComponent={
+                    <View style={styles.emptyState}>
+                        <View style={styles.emptyIconCircle}>
+                            <Filter size={32} color={Colors.textLight} />
                         </View>
-                    }
-                />
-            </View>
-        );
-    }
-}
+                        <Text style={styles.emptyTitle}>No transactions found</Text>
+                        <Text style={styles.emptySubtitle}>
+                            {searchQuery
+                                ? 'Try adjusting your search or filters'
+                                : 'Change the date range to see more transactions'}
+                        </Text>
+                    </View>
+                }
+            />
+        </View>
+    );
+};
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: Colors.background },
+    container: { 
+        flex: 1, 
+        backgroundColor: Colors.background 
+    },
     header: {
         paddingHorizontal: Spacing.md,
         paddingTop: Spacing.lg,
@@ -460,16 +466,32 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         backgroundColor: Colors.primary,
     },
-    headerLeft: {
-        flex: 1,
+    backButton: {
+        width: 40,
+        height: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    title: { fontSize: 24, fontWeight: '700', color: Colors.surface },
+    headerCenter: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    title: { 
+        fontSize: 20, 
+        fontWeight: '700', 
+        color: Colors.surface 
+    },
     subtitle: {
-        fontSize: 13,
+        fontSize: 12,
         color: 'rgba(255, 255, 255, 0.8)',
         marginTop: 2,
     },
-    headerActions: { flexDirection: 'row', gap: Spacing.xs },
+    headerActions: { 
+        flexDirection: 'row', 
+        gap: Spacing.xs,
+        width: 40,
+        justifyContent: 'flex-end',
+    },
     headerBtn: {
         width: 40,
         height: 40,
@@ -492,7 +514,12 @@ const styles = StyleSheet.create({
         gap: Spacing.sm,
         ...Shadows.sm,
     },
-    searchInput: { flex: 1, fontSize: 14, color: Colors.text, padding: 0 },
+    searchInput: { 
+        flex: 1, 
+        fontSize: 14, 
+        color: Colors.text, 
+        padding: 0 
+    },
     filtersSection: {
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm,
@@ -520,8 +547,14 @@ const styles = StyleSheet.create({
         borderColor: Colors.primary,
         ...Shadows.sm,
     },
-    filterChipText: { fontSize: 13, fontWeight: '600', color: Colors.text },
-    filterChipTextActive: { color: Colors.surface },
+    filterChipText: { 
+        fontSize: 13, 
+        fontWeight: '600', 
+        color: Colors.text 
+    },
+    filterChipTextActive: { 
+        color: Colors.surface 
+    },
     summaryContainer: {
         flexDirection: 'row',
         paddingHorizontal: Spacing.md,
@@ -551,8 +584,16 @@ const styles = StyleSheet.create({
     summaryContent: {
         flex: 1,
     },
-    summaryLabel: { fontSize: 11, color: Colors.textSecondary, marginBottom: 4 },
-    summaryValue: { fontSize: 18, fontWeight: '800', color: Colors.text },
+    summaryLabel: { 
+        fontSize: 11, 
+        color: Colors.textSecondary, 
+        marginBottom: 4 
+    },
+    summaryValue: { 
+        fontSize: 18, 
+        fontWeight: '800', 
+        color: Colors.text 
+    },
     netBalanceCard: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -569,8 +610,16 @@ const styles = StyleSheet.create({
     netBalanceLeft: {
         flex: 1,
     },
-    netLabel: { fontSize: 12, color: Colors.textSecondary, marginBottom: 4, fontWeight: '500' },
-    netValue: { fontSize: 24, fontWeight: '800' },
+    netLabel: { 
+        fontSize: 12, 
+        color: Colors.textSecondary, 
+        marginBottom: 4, 
+        fontWeight: '500' 
+    },
+    netValue: { 
+        fontSize: 24, 
+        fontWeight: '800' 
+    },
     countBadge: {
         backgroundColor: Colors.background,
         paddingHorizontal: Spacing.md,
@@ -579,8 +628,17 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         minWidth: 60,
     },
-    countNumber: { fontSize: 20, fontWeight: '800', color: Colors.text },
-    countLabel: { fontSize: 10, color: Colors.textSecondary, marginTop: 2, fontWeight: '500' },
+    countNumber: { 
+        fontSize: 20, 
+        fontWeight: '800', 
+        color: Colors.text 
+    },
+    countLabel: { 
+        fontSize: 10, 
+        color: Colors.textSecondary, 
+        marginTop: 2, 
+        fontWeight: '500' 
+    },
     listContent: {
         paddingBottom: Spacing.lg,
     },
@@ -604,14 +662,22 @@ const styles = StyleSheet.create({
         borderRadius: 3,
         backgroundColor: Colors.primary,
     },
-    sectionTitle: { fontSize: 13, fontWeight: '700', color: Colors.text },
+    sectionTitle: { 
+        fontSize: 13, 
+        fontWeight: '700', 
+        color: Colors.text 
+    },
     sectionCountBadge: {
         backgroundColor: Colors.primary + '20',
         paddingHorizontal: 8,
         paddingVertical: 2,
         borderRadius: 10,
     },
-    sectionCount: { fontSize: 11, fontWeight: '700', color: Colors.primary },
+    sectionCount: { 
+        fontSize: 11, 
+        fontWeight: '700', 
+        color: Colors.primary 
+    },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -650,11 +716,31 @@ const styles = StyleSheet.create({
         borderColor: Colors.surface,
         ...Shadows.sm,
     },
-    details: { flex: 1, marginRight: Spacing.sm },
-    sender: { fontSize: 15, fontWeight: '700', color: Colors.text, marginBottom: 4 },
-    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-    bank: { fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
-    dot: { fontSize: 10, color: Colors.borderLight },
+    details: { 
+        flex: 1, 
+        marginRight: Spacing.sm 
+    },
+    sender: { 
+        fontSize: 15, 
+        fontWeight: '700', 
+        color: Colors.text, 
+        marginBottom: 4 
+    },
+    metaRow: { 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        gap: 6, 
+        marginBottom: 4 
+    },
+    bank: { 
+        fontSize: 11, 
+        color: Colors.textSecondary, 
+        fontWeight: '500' 
+    },
+    dot: { 
+        fontSize: 10, 
+        color: Colors.borderLight 
+    },
     bizBadge: { 
         backgroundColor: '#EEF2FF', 
         paddingHorizontal: 6, 
@@ -663,14 +749,33 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#C7D2FE',
     },
-    bizBadgeText: { fontSize: 9, color: '#4F46E5', fontWeight: '700' },
-    time: { fontSize: 11, color: Colors.textLight, fontWeight: '500' },
+    bizBadgeText: { 
+        fontSize: 9, 
+        color: '#4F46E5', 
+        fontWeight: '700' 
+    },
+    time: { 
+        fontSize: 11, 
+        color: Colors.textLight, 
+        fontWeight: '500' 
+    },
     amountContainer: {
         alignItems: 'flex-end',
     },
-    amount: { fontSize: 16, fontWeight: '800', letterSpacing: -0.5 },
-    emptyContainer: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: Spacing.lg },
-    emptyState: { alignItems: 'center', paddingVertical: Spacing.xxl },
+    amount: { 
+        fontSize: 16, 
+        fontWeight: '800', 
+        letterSpacing: -0.5 
+    },
+    emptyContainer: { 
+        flexGrow: 1, 
+        justifyContent: 'center', 
+        paddingHorizontal: Spacing.lg 
+    },
+    emptyState: { 
+        alignItems: 'center', 
+        paddingVertical: Spacing.xxl 
+    },
     emptyIconCircle: {
         width: 80,
         height: 80,
@@ -680,8 +785,18 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: Spacing.md,
     },
-    emptyTitle: { fontSize: 18, fontWeight: '700', color: Colors.text, marginBottom: Spacing.xs },
-    emptySubtitle: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', maxWidth: 280 },
+    emptyTitle: { 
+        fontSize: 18, 
+        fontWeight: '700', 
+        color: Colors.text, 
+        marginBottom: Spacing.xs 
+    },
+    emptySubtitle: { 
+        fontSize: 13, 
+        color: Colors.textSecondary, 
+        textAlign: 'center', 
+        maxWidth: 280 
+    },
     modalOverlay: { 
         flex: 1, 
         backgroundColor: 'rgba(0,0,0,0.6)', 
@@ -710,7 +825,9 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.lg, 
         textAlign: 'center' 
     },
-    datePickerActions: { gap: Spacing.xs },
+    datePickerActions: { 
+        gap: Spacing.xs 
+    },
     datePickerBtn: {
         backgroundColor: Colors.primary,
         paddingVertical: Spacing.md,
@@ -722,9 +839,11 @@ const styles = StyleSheet.create({
         borderWidth: 1, 
         borderColor: Colors.border 
     },
-    datePickerBtnText: { fontSize: 15, fontWeight: '600', color: Colors.surface },
+    datePickerBtnText: { 
+        fontSize: 15, 
+        fontWeight: '600', 
+        color: Colors.surface 
+    },
 });
 
-export default function AllTransactionsScreen(props) {
-    return <AllTransactionsScreenImpl {...props} />;
-}
+export default AllTransactionsScreen;

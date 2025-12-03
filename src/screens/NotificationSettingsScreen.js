@@ -17,6 +17,7 @@ import {
     CreditCard,
     TrendingUp,
     TestTube,
+    Trash2,
 } from 'lucide-react-native';
 import { Colors, Spacing, BorderRadius } from '../styles/Theme';
 import NotificationService from '../services/NotificationService';
@@ -72,6 +73,24 @@ const NotificationSettingsScreen = ({ navigation }) => {
         Alert.alert('🔄 Checking...', 'Scanning for alerts');
         await NotificationService.checkAllAlerts();
         Alert.alert('✅ Done', 'All alerts checked. Notifications sent if issues found.');
+    };
+
+    const handleClearHistory = () => {
+        Alert.alert(
+            'Clear Notification History?',
+            'This will allow all notifications to be sent again, even if they were recently shown. Useful for testing.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Clear',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await NotificationService.clearNotificationHistory();
+                        Alert.alert('✅ Cleared', 'Notification history has been cleared');
+                    }
+                }
+            ]
+        );
     };
 
     if (loading) {
@@ -137,7 +156,7 @@ const NotificationSettingsScreen = ({ navigation }) => {
                                 <Text style={styles.settingLabel}>Low Stock Alerts</Text>
                             </View>
                             <Text style={styles.settingDesc}>
-                                Get notified when items run low
+                                Get notified when items run low (once per 24 hours)
                             </Text>
                         </View>
                         <Switch
@@ -157,7 +176,7 @@ const NotificationSettingsScreen = ({ navigation }) => {
                                 <Text style={styles.settingLabel}>Expiry Alerts</Text>
                             </View>
                             <Text style={styles.settingDesc}>
-                                Get notified about expiring items (7 days before)
+                                Notified 7 days before expiry (once per 24 hours)
                             </Text>
                         </View>
                         <Switch
@@ -177,7 +196,7 @@ const NotificationSettingsScreen = ({ navigation }) => {
                                 <Text style={styles.settingLabel}>Credit Overdue Alerts</Text>
                             </View>
                             <Text style={styles.settingDesc}>
-                                Get notified about overdue credits (after 7 days)
+                                Notified for credits overdue by 7+ days (once per 24 hours)
                             </Text>
                         </View>
                         <Switch
@@ -211,10 +230,10 @@ const NotificationSettingsScreen = ({ navigation }) => {
                 </View>
 
                 {/* Actions */}
-                {/*                 <View style={styles.section}>
+                <View style={styles.section}>
                     <View style={styles.sectionHeader}>
                         <TestTube size={20} color={Colors.primary} />
-                        <Text style={styles.sectionTitle}>Testing & Actions</Text>
+                        <Text style={styles.sectionTitle}>Testing & Maintenance</Text>
                     </View>
 
                     <TouchableOpacity
@@ -238,13 +257,31 @@ const NotificationSettingsScreen = ({ navigation }) => {
                             Check All Alerts Now
                         </Text>
                     </TouchableOpacity>
-                </View> */}
+
+                    <TouchableOpacity
+                        style={[styles.actionButton, styles.dangerButton]}
+                        onPress={handleClearHistory}
+                    >
+                        <Trash2 size={18} color={Colors.error} />
+                        <View style={{ flex: 1 }}>
+                            <Text style={[styles.actionText, { color: Colors.error }]}>
+                                Clear Notification History
+                            </Text>
+                            <Text style={styles.dangerHint}>
+                                Allows duplicate notifications (for testing)
+                            </Text>
+                        </View>
+                    </TouchableOpacity>
+                </View>
 
                 {/* Info */}
                 <View style={styles.infoSection}>
                     <Text style={styles.infoTitle}>ℹ️ How Notifications Work</Text>
                     <Text style={styles.infoText}>
-                        • <Text style={styles.infoBold}>Low Stock:</Text> Notifies when quantity reaches the threshold you set per item
+                        • <Text style={styles.infoBold}>Duplicate Prevention:</Text> Same notification won't be sent twice within 24 hours
+                    </Text>
+                    <Text style={styles.infoText}>
+                        • <Text style={styles.infoBold}>Low Stock:</Text> Notifies when quantity reaches threshold
                     </Text>
                     <Text style={styles.infoText}>
                         • <Text style={styles.infoBold}>Expiry:</Text> Alerts 7 days before expiry date
@@ -360,6 +397,15 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.sm,
         borderWidth: 1,
         borderColor: Colors.border,
+    },
+    dangerButton: {
+        borderColor: Colors.error + '40',
+        backgroundColor: Colors.error + '05',
+    },
+    dangerHint: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        marginTop: 2,
     },
     actionText: {
         fontSize: 14,

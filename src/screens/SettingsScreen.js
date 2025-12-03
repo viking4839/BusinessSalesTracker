@@ -254,8 +254,8 @@ const SettingsScreen = ({ navigation }) => {
             backgroundColor: Colors.surface, borderRadius: 16, padding: 24, minWidth: 260, alignItems: 'center'
           }}>
             <Text style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Help & Support</Text>
-            <Text style={{ marginBottom: 12 }}>Email: support@trackbiz.com</Text>
-            <Text style={{ marginBottom: 16 }}>Phone: +254 XXX XXX XXX</Text>
+            <Text style={{ marginBottom: 12 }}>Email: support:charlesmacharia4564@gmail.com</Text>
+            <Text style={{ marginBottom: 16 }}>Phone: +254 769640918</Text>
             <TouchableOpacity onPress={() => setShowHelp(false)}>
               <Text style={{ color: Colors.primary, fontWeight: 'bold' }}>Close</Text>
             </TouchableOpacity>

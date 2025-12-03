@@ -58,6 +58,8 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
 
             // Notify HomeScreen to refresh profit stats
             DeviceEventEmitter.emit('profitReportUpdated');
+            // Notify all transactions screen to refresh
+            DeviceEventEmitter.emit('transactions:updated');
 
             Alert.alert(
                 '✅ Linked Successfully',
