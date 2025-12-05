@@ -13,17 +13,18 @@ import {
     StatusBar,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { 
-    ArrowDownLeft, 
-    ArrowUpRight, 
-    Search, 
-    X, 
+import {
+    ArrowDownLeft,
+    ArrowUpRight,
+    Search,
+    X,
     ArrowLeft,
-    Calendar, 
-    Package, 
-    Filter, 
-    TrendingUp, 
-    TrendingDown 
+    Calendar,
+    Package,
+    Filter,
+    TrendingUp,
+    TrendingDown,
+    CreditCard
 } from 'lucide-react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import { useFocusEffect } from '@react-navigation/native';
@@ -52,14 +53,14 @@ const AllTransactionsScreen = ({ navigation }) => {
         try {
             const data = await AsyncStorage.getItem('transactions');
             const parsed = data ? JSON.parse(data) : [];
-            
+
             // Sort by timestamp
             parsed.sort((a, b) => {
                 const dateA = new Date(a.timestamp || a.date || 0);
                 const dateB = new Date(b.timestamp || b.date || 0);
                 return dateB - dateA;
             });
-            
+
             setTransactions(parsed);
         } catch (e) {
             console.error('Failed to load transactions', e);
@@ -125,10 +126,10 @@ const AllTransactionsScreen = ({ navigation }) => {
         const map = new Map();
         txns.forEach(tx => {
             const d = new Date(tx.timestamp || tx.date || 0);
-            const key = d.toLocaleDateString('en-US', { 
-                year: 'numeric', 
-                month: 'short', 
-                day: 'numeric' 
+            const key = d.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
             });
             if (!map.has(key)) map.set(key, []);
             map.get(key).push(tx);
@@ -163,7 +164,7 @@ const AllTransactionsScreen = ({ navigation }) => {
         const isIn = Number(item.amount || 0) > 0;
 
         // FIXED: Safer inventory match check
-        const hasMatch = item.inventoryMatch && 
+        const hasMatch = item.inventoryMatch &&
             typeof item.inventoryMatch === 'object' &&
             !item.inventoryMatch.userConfirmed &&
             !item.inventoryMatch.userDismissed;
@@ -172,8 +173,12 @@ const AllTransactionsScreen = ({ navigation }) => {
             <TouchableOpacity
                 style={styles.row}
                 onPress={() => {
-                    // FIXED: Use push instead of navigate to avoid stacking issues
-                    navigation.push('TransactionDetails', { transaction: item });
+                    // FIXED: Use navigate instead of push to prevent stack buildup
+                    navigation.navigate('TransactionDetails', { 
+                        transaction: item,
+                        // Add a unique key to force re-render if same transaction
+                        timestamp: Date.now()
+                    });
                 }}
                 activeOpacity={0.7}
             >
@@ -228,9 +233,9 @@ const AllTransactionsScreen = ({ navigation }) => {
                         )}
                     </View>
                     <Text style={styles.time}>
-                        {new Date(item.timestamp || item.date || 0).toLocaleTimeString([], { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
+                        {new Date(item.timestamp || item.date || 0).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit'
                         })}
                     </Text>
                 </View>
@@ -255,13 +260,13 @@ const AllTransactionsScreen = ({ navigation }) => {
 
             {/* Header */}
             <View style={styles.header}>
-                <TouchableOpacity 
+                <TouchableOpacity
                     style={styles.backButton}
                     onPress={() => navigation.goBack()}
                 >
                     <ArrowLeft size={24} color={Colors.surface} />
                 </TouchableOpacity>
-                
+
                 <View style={styles.headerCenter}>
                     <Text style={styles.title}>All Transactions</Text>
                     <Text style={styles.subtitle}>{filtered.length} transactions</Text>
@@ -311,9 +316,9 @@ const AllTransactionsScreen = ({ navigation }) => {
                             onPress={() => setDateFilter(val)}
                         >
                             <Text style={[styles.filterChipText, dateFilter === val && styles.filterChipTextActive]}>
-                                {val === 'today' ? 'Today' : 
-                                 val === 'yesterday' ? 'Yesterday' : 
-                                 val === 'week' ? 'Week' : 'Month'}
+                                {val === 'today' ? 'Today' :
+                                    val === 'yesterday' ? 'Yesterday' :
+                                        val === 'week' ? 'Week' : 'Month'}
                             </Text>
                         </TouchableOpacity>
                     ))}
@@ -453,9 +458,9 @@ const AllTransactionsScreen = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-    container: { 
-        flex: 1, 
-        backgroundColor: Colors.background 
+    container: {
+        flex: 1,
+        backgroundColor: Colors.background
     },
     header: {
         paddingHorizontal: Spacing.md,
@@ -476,18 +481,18 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
     },
-    title: { 
-        fontSize: 20, 
-        fontWeight: '700', 
-        color: Colors.surface 
+    title: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: Colors.surface
     },
     subtitle: {
         fontSize: 12,
         color: 'rgba(255, 255, 255, 0.8)',
         marginTop: 2,
     },
-    headerActions: { 
-        flexDirection: 'row', 
+    headerActions: {
+        flexDirection: 'row',
         gap: Spacing.xs,
         width: 40,
         justifyContent: 'flex-end',
@@ -514,11 +519,11 @@ const styles = StyleSheet.create({
         gap: Spacing.sm,
         ...Shadows.sm,
     },
-    searchInput: { 
-        flex: 1, 
-        fontSize: 14, 
-        color: Colors.text, 
-        padding: 0 
+    searchInput: {
+        flex: 1,
+        fontSize: 14,
+        color: Colors.text,
+        padding: 0
     },
     filtersSection: {
         paddingHorizontal: Spacing.md,
@@ -542,18 +547,18 @@ const styles = StyleSheet.create({
         borderColor: Colors.border,
         minHeight: 36,
     },
-    filterChipActive: { 
-        backgroundColor: Colors.primary, 
+    filterChipActive: {
+        backgroundColor: Colors.primary,
         borderColor: Colors.primary,
         ...Shadows.sm,
     },
-    filterChipText: { 
-        fontSize: 13, 
-        fontWeight: '600', 
-        color: Colors.text 
+    filterChipText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.text
     },
-    filterChipTextActive: { 
-        color: Colors.surface 
+    filterChipTextActive: {
+        color: Colors.surface
     },
     summaryContainer: {
         flexDirection: 'row',
@@ -584,15 +589,15 @@ const styles = StyleSheet.create({
     summaryContent: {
         flex: 1,
     },
-    summaryLabel: { 
-        fontSize: 11, 
-        color: Colors.textSecondary, 
-        marginBottom: 4 
+    summaryLabel: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        marginBottom: 4
     },
-    summaryValue: { 
-        fontSize: 18, 
-        fontWeight: '800', 
-        color: Colors.text 
+    summaryValue: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: Colors.text
     },
     netBalanceCard: {
         flexDirection: 'row',
@@ -610,15 +615,15 @@ const styles = StyleSheet.create({
     netBalanceLeft: {
         flex: 1,
     },
-    netLabel: { 
-        fontSize: 12, 
-        color: Colors.textSecondary, 
-        marginBottom: 4, 
-        fontWeight: '500' 
+    netLabel: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        marginBottom: 4,
+        fontWeight: '500'
     },
-    netValue: { 
-        fontSize: 24, 
-        fontWeight: '800' 
+    netValue: {
+        fontSize: 24,
+        fontWeight: '800'
     },
     countBadge: {
         backgroundColor: Colors.background,
@@ -628,16 +633,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         minWidth: 60,
     },
-    countNumber: { 
-        fontSize: 20, 
-        fontWeight: '800', 
-        color: Colors.text 
+    countNumber: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: Colors.text
     },
-    countLabel: { 
-        fontSize: 10, 
-        color: Colors.textSecondary, 
-        marginTop: 2, 
-        fontWeight: '500' 
+    countLabel: {
+        fontSize: 10,
+        color: Colors.textSecondary,
+        marginTop: 2,
+        fontWeight: '500'
     },
     listContent: {
         paddingBottom: Spacing.lg,
@@ -662,10 +667,10 @@ const styles = StyleSheet.create({
         borderRadius: 3,
         backgroundColor: Colors.primary,
     },
-    sectionTitle: { 
-        fontSize: 13, 
-        fontWeight: '700', 
-        color: Colors.text 
+    sectionTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.text
     },
     sectionCountBadge: {
         backgroundColor: Colors.primary + '20',
@@ -673,10 +678,10 @@ const styles = StyleSheet.create({
         paddingVertical: 2,
         borderRadius: 10,
     },
-    sectionCount: { 
-        fontSize: 11, 
-        fontWeight: '700', 
-        color: Colors.primary 
+    sectionCount: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: Colors.primary
     },
     row: {
         flexDirection: 'row',
@@ -716,65 +721,65 @@ const styles = StyleSheet.create({
         borderColor: Colors.surface,
         ...Shadows.sm,
     },
-    details: { 
-        flex: 1, 
-        marginRight: Spacing.sm 
+    details: {
+        flex: 1,
+        marginRight: Spacing.sm
     },
-    sender: { 
-        fontSize: 15, 
-        fontWeight: '700', 
-        color: Colors.text, 
-        marginBottom: 4 
+    sender: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 4
     },
-    metaRow: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        gap: 6, 
-        marginBottom: 4 
+    metaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 4
     },
-    bank: { 
-        fontSize: 11, 
-        color: Colors.textSecondary, 
-        fontWeight: '500' 
+    bank: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        fontWeight: '500'
     },
-    dot: { 
-        fontSize: 10, 
-        color: Colors.borderLight 
+    dot: {
+        fontSize: 10,
+        color: Colors.borderLight
     },
-    bizBadge: { 
-        backgroundColor: '#EEF2FF', 
-        paddingHorizontal: 6, 
-        paddingVertical: 2, 
+    bizBadge: {
+        backgroundColor: '#EEF2FF',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
         borderRadius: 4,
         borderWidth: 1,
         borderColor: '#C7D2FE',
     },
-    bizBadgeText: { 
-        fontSize: 9, 
-        color: '#4F46E5', 
-        fontWeight: '700' 
+    bizBadgeText: {
+        fontSize: 9,
+        color: '#4F46E5',
+        fontWeight: '700'
     },
-    time: { 
-        fontSize: 11, 
-        color: Colors.textLight, 
-        fontWeight: '500' 
+    time: {
+        fontSize: 11,
+        color: Colors.textLight,
+        fontWeight: '500'
     },
     amountContainer: {
         alignItems: 'flex-end',
     },
-    amount: { 
-        fontSize: 16, 
-        fontWeight: '800', 
-        letterSpacing: -0.5 
+    amount: {
+        fontSize: 16,
+        fontWeight: '800',
+        letterSpacing: -0.5
     },
-    emptyContainer: { 
-        flexGrow: 1, 
-        justifyContent: 'center', 
-        paddingHorizontal: Spacing.lg 
+    emptyContainer: {
+        flexGrow: 1,
+        justifyContent: 'center',
+        paddingHorizontal: Spacing.lg
     },
-    emptyState: { 
-        alignItems: 'center', 
-        paddingVertical: Spacing.xxl 
+    emptyState: {
+        alignItems: 'center',
+        paddingVertical: Spacing.xxl
     },
     emptyIconCircle: {
         width: 80,
@@ -785,22 +790,22 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: Spacing.md,
     },
-    emptyTitle: { 
-        fontSize: 18, 
-        fontWeight: '700', 
-        color: Colors.text, 
-        marginBottom: Spacing.xs 
+    emptyTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: Spacing.xs
     },
-    emptySubtitle: { 
-        fontSize: 13, 
-        color: Colors.textSecondary, 
-        textAlign: 'center', 
-        maxWidth: 280 
+    emptySubtitle: {
+        fontSize: 13,
+        color: Colors.textSecondary,
+        textAlign: 'center',
+        maxWidth: 280
     },
-    modalOverlay: { 
-        flex: 1, 
-        backgroundColor: 'rgba(0,0,0,0.6)', 
-        justifyContent: 'center', 
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'center',
         alignItems: 'center',
         padding: Spacing.lg,
     },
@@ -812,21 +817,21 @@ const styles = StyleSheet.create({
         maxWidth: 320,
         ...Shadows.lg,
     },
-    datePickerTitle: { 
-        fontSize: 18, 
-        fontWeight: '700', 
-        color: Colors.text, 
-        marginBottom: Spacing.xs, 
-        textAlign: 'center' 
+    datePickerTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: Spacing.xs,
+        textAlign: 'center'
     },
-    datePickerHint: { 
-        fontSize: 13, 
-        color: Colors.textSecondary, 
-        marginBottom: Spacing.lg, 
-        textAlign: 'center' 
+    datePickerHint: {
+        fontSize: 13,
+        color: Colors.textSecondary,
+        marginBottom: Spacing.lg,
+        textAlign: 'center'
     },
-    datePickerActions: { 
-        gap: Spacing.xs 
+    datePickerActions: {
+        gap: Spacing.xs
     },
     datePickerBtn: {
         backgroundColor: Colors.primary,
@@ -834,15 +839,15 @@ const styles = StyleSheet.create({
         borderRadius: BorderRadius.md,
         alignItems: 'center',
     },
-    datePickerBtnCancel: { 
-        backgroundColor: Colors.background, 
-        borderWidth: 1, 
-        borderColor: Colors.border 
+    datePickerBtnCancel: {
+        backgroundColor: Colors.background,
+        borderWidth: 1,
+        borderColor: Colors.border
     },
-    datePickerBtnText: { 
-        fontSize: 15, 
-        fontWeight: '600', 
-        color: Colors.surface 
+    datePickerBtnText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.surface
     },
 });
 

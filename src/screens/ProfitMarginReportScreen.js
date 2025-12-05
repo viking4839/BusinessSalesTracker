@@ -25,11 +25,14 @@ import {
     RefreshCw,
     ShoppingBag,
     Percent,
+    CreditCard,
+    User,  // ADD THIS
 } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import ProfitReportStorage from '../utils/ProfitReportStorage';
 import InventoryStorage from '../utils/InventoryStorage';
 import PrintPDF from '../utils/PrintPDF';
+import TransactionStorage from '../utils/TransactionStorage';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 
 const { width } = Dimensions.get('window');
@@ -42,6 +45,7 @@ const ProfitMarginReportScreen = ({ navigation }) => {
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState('today');
     const [exporting, setExporting] = useState(false);
+    const [creditTransactions, setCreditTransactions] = useState([]);
 
     useFocusEffect(
         useCallback(() => {
@@ -54,22 +58,46 @@ const ProfitMarginReportScreen = ({ navigation }) => {
         try {
             console.log('📄 Loading profit report data...');
 
-            const today = new Date().toISOString().split('T')[0];
-            const report = await ProfitReportStorage.loadReport(today);
+            const today = new Date();
+            const todayString = today.toISOString().split('T')[0];
+
+            const report = await ProfitReportStorage.loadReport(todayString);
             setTodayReport(report);
             console.log('✅ Today report:', report);
 
             const weekly = await ProfitReportStorage.getWeeklyReports();
-            setWeeklyReports(weekly);
-            console.log('✅ Weekly reports:', Object.keys(weekly).length);
+            setWeeklyReports(weekly || {});
+            console.log('✅ Weekly reports:', Object.keys(weekly || {}).length);
 
             const monthly = await ProfitReportStorage.getMonthlyReports();
-            setMonthlyReports(monthly);
-            console.log('✅ Monthly reports:', Object.keys(monthly).length);
+            setMonthlyReports(monthly || {});
+            console.log('✅ Monthly reports:', Object.keys(monthly || {}).length);
 
             const stats = await InventoryStorage.getInventoryStats();
             setInventoryStats(stats);
             console.log('✅ Inventory stats:', stats);
+
+            // Load credit transactions with safe date handling
+            try {
+                const allTransactions = await TransactionStorage.loadTransactions();
+                const todayCredits = allTransactions.filter(t => {
+                    try {
+                        if (!t.date && !t.createdAt) return false;
+                        const txDate = new Date(t.date || t.createdAt);
+                        if (isNaN(txDate.getTime())) return false;
+                        const txDateString = txDate.toISOString().split('T')[0];
+                        return txDateString === todayString &&
+                            (t.isCredit || t.paymentMethod === 'credit_cleared' || t.paymentMethod === 'credit_payment');
+                    } catch (e) {
+                        return false;
+                    }
+                });
+                setCreditTransactions(todayCredits);
+                console.log('✅ Credit transactions:', todayCredits.length);
+            } catch (txError) {
+                console.error('Error loading credit transactions:', txError);
+                setCreditTransactions([]);
+            }
 
         } catch (error) {
             console.error('❌ Error loading profit data:', error);
@@ -102,10 +130,14 @@ const ProfitMarginReportScreen = ({ navigation }) => {
             switch (activeTab) {
                 case 'today':
                     if (!todayReport || !todayReport.totalSales) {
-                        Alert.alert('No Data', 'There is no profit data to export for today.');
-                        return;
+                        // Allow export if there are credit transactions even without regular sales
+                        if (creditTransactions.length === 0) {
+                            Alert.alert('No Data', 'There is no profit data to export for today.');
+                            return;
+                        }
                     }
-                    pdfPath = await PrintPDF.exportDaily(todayReport, inventoryStats);
+                    // Pass credit transactions to the export
+                    pdfPath = await PrintPDF.exportDaily(todayReport || {}, inventoryStats, creditTransactions);
                     break;
 
                 case 'weekly':
@@ -120,7 +152,7 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                     if (monthlyReports && Object.keys(monthlyReports).length > 0) {
                         pdfPath = await PrintPDF.exportMonthly(monthlyReports);
                     } else if (todayReport) {
-                        pdfPath = await PrintPDF.exportDaily(todayReport, inventoryStats);
+                        pdfPath = await PrintPDF.exportDaily(todayReport, inventoryStats, creditTransactions);
                     } else {
                         Alert.alert('No Data', 'There is no data to export for insights.');
                         return;
@@ -359,6 +391,112 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                         <Text style={styles.footerValue}>{formatCurrency(todayReport.totalSales)}</Text>
                         <Text style={styles.footerProfit}>{formatCurrency(todayReport.totalProfit)}</Text>
                     </View>
+                </View>
+            </View>
+        );
+    };
+
+    const renderCreditTransactions = () => {
+        if (creditTransactions.length === 0) {
+            return null;
+        }
+
+        const totalCreditAmount = creditTransactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+        const totalCreditProfit = creditTransactions.reduce((sum, t) => sum + (t.profit || 0), 0);
+
+        return (
+            <View style={styles.creditSection}>
+                <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Credit Collections</Text>
+                    <View style={styles.creditTotalBadge}>
+                        <Text style={styles.creditTotalText}>
+                            +Ksh {totalCreditAmount.toLocaleString()}
+                        </Text>
+                    </View>
+                </View>
+
+                <View style={styles.creditListContainer}>
+                    {/* Credit Summary Header */}
+                    <View style={styles.creditSummaryHeader}>
+                        <View style={styles.creditSummaryItem}>
+                            <Text style={styles.creditSummaryLabel}>Total Collected</Text>
+                            <Text style={styles.creditSummaryValue}>Ksh {totalCreditAmount.toLocaleString()}</Text>
+                        </View>
+                        <View style={styles.creditSummaryDivider} />
+                        <View style={styles.creditSummaryItem}>
+                            <Text style={styles.creditSummaryLabel}>Profit Earned</Text>
+                            <Text style={[styles.creditSummaryValue, { color: Colors.success }]}>
+                                Ksh {totalCreditProfit.toLocaleString()}
+                            </Text>
+                        </View>
+                    </View>
+
+                    {creditTransactions.map((transaction, index) => (
+                        <View key={transaction.id || `credit-${index}`} style={styles.creditTransactionCard}>
+                            <View style={styles.creditTransactionHeader}>
+                                <View style={styles.creditIconContainer}>
+                                    <CreditCard size={16} color="#2563EB" />
+                                </View>
+                                <View style={styles.creditTransactionInfo}>
+                                    <View style={styles.creditTitleRow}>
+                                        <Text style={styles.creditItemName} numberOfLines={1}>
+                                            {transaction.itemName || 'Credit Payment'}
+                                        </Text>
+                                        <View style={[
+                                            styles.creditTypeBadge,
+                                            transaction.creditType === 'cleared'
+                                                ? styles.creditClearedBadge
+                                                : styles.creditPaymentBadge
+                                        ]}>
+                                            <Text style={[
+                                                styles.creditTypeBadgeText,
+                                                transaction.creditType === 'cleared'
+                                                    ? styles.creditClearedText
+                                                    : styles.creditPaymentText
+                                            ]}>
+                                                {transaction.creditType === 'cleared' ? 'Cleared' : 'Partial'}
+                                            </Text>
+                                        </View>
+                                    </View>
+
+                                    {transaction.customerName && (
+                                        <View style={styles.creditCustomerRow}>
+                                            <User size={12} color={Colors.textSecondary} />
+                                            <Text style={styles.creditCustomerName}>
+                                                {transaction.customerName}
+                                            </Text>
+                                        </View>
+                                    )}
+
+                                    <Text style={styles.creditTransactionTime}>
+                                        {(() => {
+                                            try {
+                                                const date = new Date(transaction.date || transaction.createdAt);
+                                                if (isNaN(date.getTime())) return 'Time unknown';
+                                                return date.toLocaleTimeString('en-US', {
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                });
+                                            } catch (e) {
+                                                return 'Time unknown';
+                                            }
+                                        })()}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.creditAmountContainer}>
+                                <Text style={styles.creditTransactionAmount}>
+                                    +Ksh {(transaction.amount || 0).toLocaleString()}
+                                </Text>
+                                {transaction.profit !== undefined && transaction.profit !== 0 && (
+                                    <Text style={styles.creditProfitText}>
+                                        Profit: Ksh {(transaction.profit || 0).toLocaleString()}
+                                    </Text>
+                                )}
+                            </View>
+                        </View>
+                    ))}
                 </View>
             </View>
         );
@@ -642,6 +780,7 @@ const ProfitMarginReportScreen = ({ navigation }) => {
                 {activeTab === 'today' && (
                     <>
                         {renderSummaryCards()}
+                        {renderCreditTransactions()}
                         {renderItemBreakdown()}
                     </>
                 )}
@@ -1279,6 +1418,145 @@ const styles = StyleSheet.create({
     footerText: {
         fontSize: 11,
         color: Colors.textSecondary,
+    },
+
+    // Credit Transaction Styles
+    creditSection: {
+        paddingHorizontal: Spacing.md,
+        marginBottom: Spacing.md,
+    },
+    creditTotalBadge: {
+        backgroundColor: '#D1FAE5',
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 4,
+        borderRadius: 12,
+    },
+    creditTotalText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: Colors.success,
+    },
+    creditListContainer: {
+        backgroundColor: Colors.surface,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        overflow: 'hidden',
+        ...Shadows.sm,
+    },
+    creditTransactionCard: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.borderLight,
+    },
+    creditTransactionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+        gap: Spacing.sm,
+    },
+    creditIconContainer: {
+        width: 36,
+        height: 36,
+        borderRadius: 10,
+        backgroundColor: '#EFF6FF',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    creditTransactionInfo: {
+        flex: 1,
+    },
+    creditTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        flexWrap: 'wrap',
+    },
+    creditItemName: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: Colors.text,
+    },
+    creditTypeBadge: {
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 6,
+    },
+    creditClearedBadge: {
+        backgroundColor: '#D1FAE5',
+    },
+    creditPaymentBadge: {
+        backgroundColor: '#FEF3C7',
+    },
+    creditTypeBadgeText: {
+        fontSize: 10,
+        fontWeight: '700',
+    },
+    creditClearedText: {
+        color: Colors.success,
+    },
+    creditPaymentText: {
+        color: '#F59E0B',
+    },
+    creditCustomerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: 2,
+    },
+    creditCustomerName: {
+        fontSize: 12,
+        color: Colors.primary,
+        fontWeight: '600',
+    },
+    creditTransactionTime: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        marginTop: 2,
+    },
+    creditTransactionAmount: {
+        fontSize: 15,
+        fontWeight: '800',
+        color: Colors.success,
+    },
+    creditAmountContainer: {
+        alignItems: 'flex-end',
+    },
+    creditProfitText: {
+        fontSize: 11,
+        color: Colors.success,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    creditSummaryHeader: {
+        flexDirection: 'row',
+        backgroundColor: '#F0FDF4',
+        padding: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    creditSummaryItem: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    creditSummaryLabel: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        marginBottom: 4,
+    },
+    creditSummaryValue: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    creditSummaryDivider: {
+        width: 1,
+        backgroundColor: Colors.border,
+        marginHorizontal: Spacing.sm,
     },
 });
 

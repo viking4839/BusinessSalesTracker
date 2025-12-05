@@ -200,6 +200,23 @@ class InventoryStorage {
         }
     }
 
+    // ✅ NEW: Delete a category
+    static async deleteCategory(categoryName) {
+        try {
+            const stored = await AsyncStorage.getItem(CATEGORIES_KEY);
+            const categories = stored ? JSON.parse(stored) : [];
+
+            const updated = categories.filter(cat => cat !== categoryName);
+            await AsyncStorage.setItem(CATEGORIES_KEY, JSON.stringify(updated));
+
+            console.log('✅ Category deleted:', categoryName);
+            return true;
+        } catch (error) {
+            console.error('❌ deleteCategory error:', error);
+            return false;
+        }
+    }
+
     // ✅ NEW: Get inventory statistics
     static async getInventoryStats() {
         try {

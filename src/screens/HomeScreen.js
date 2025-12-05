@@ -453,7 +453,7 @@ const HomeScreen = ({ navigation, route }) => {
       <View style={styles.gradientHeader}>
         <View style={styles.decorCircle1} />
         <View style={styles.decorCircle2} />
-        
+
         <View style={styles.headerTop}>
           <View>
             <Text style={styles.headerTitle}>TRACK BIZ</Text>
@@ -634,8 +634,8 @@ const HomeScreen = ({ navigation, route }) => {
               {isScanning ? 'Scanning...' : 'Scan SMS'}
             </Text>
             <Text style={styles.scanButtonSubtitle}>
-              {isScanning 
-                ? 'Please wait' 
+              {isScanning
+                ? 'Please wait'
                 : `${transactions.filter(t => t.source === 'sms_scan').length} messages found`}
             </Text>
           </TouchableOpacity>
@@ -1211,4 +1211,4 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.textSecondary,
   },
-});export default HomeScreen;
+}); export default HomeScreen;

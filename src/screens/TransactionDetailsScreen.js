@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import {
+    View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert,
+    Modal, TextInput, Pressable
+} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import {
     ArrowDownLeft, ArrowUpRight, Calendar, Clock, Building2,
-    User, MessageSquare, Hash, TrendingUp, Tag, ArrowLeft, Package, CheckCircle, XCircle
+    User, MessageSquare, Hash, TrendingUp, Tag, ArrowLeft, Package,
+    CheckCircle, XCircle, Plus, Minus, Trash2
 } from 'lucide-react-native';
 import Button from '../components/Button';
 import InventoryStorage from '../utils/InventoryStorage';
 import TransactionStorage from '../utils/TransactionStorage';
-// At the top with other imports, add:
 import TransactionInventoryMatcher from '../utils/TransactionInventoryMatcher';
 import ProfitReportStorage from '../utils/ProfitReportStorage';
 import { DeviceEventEmitter } from 'react-native';
@@ -17,20 +20,21 @@ import { DeviceEventEmitter } from 'react-native';
 const TransactionDetailsScreen = ({ route, navigation }) => {
     const { transaction } = route.params;
     const [localTransaction, setLocalTransaction] = useState(transaction);
+    const [showMultiItemModal, setShowMultiItemModal] = useState(false);
+    const [selectedItems, setSelectedItems] = useState([]);
     const isIncoming = Number(localTransaction.amount) > 0;
 
+    // Handle confirming a single match
     const handleConfirmMatch = async (matchItem, quantity) => {
         try {
             console.log('🔗 Confirming match:', matchItem.name, 'x', quantity);
 
-            // Use the new TransactionInventoryMatcher
             await TransactionInventoryMatcher.confirmMatch(
                 localTransaction,
                 matchItem,
                 quantity
             );
 
-            // Update local state with the confirmed match
             const updated = {
                 ...localTransaction,
                 inventoryMatch: {
@@ -56,15 +60,13 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
 
             setLocalTransaction(updated);
 
-            // Notify HomeScreen to refresh profit stats
             DeviceEventEmitter.emit('profitReportUpdated');
-            // Notify all transactions screen to refresh
             DeviceEventEmitter.emit('transactions:updated');
 
             Alert.alert(
                 '✅ Linked Successfully',
                 `Transaction linked to ${matchItem.name}\n${quantity} units deducted from inventory\n\nProfit report has been updated!`,
-                [{ text: 'Great!', onPress: () => navigation.goBack() }]
+                [{ text: 'Great!', onPress: () => navigation.navigate('Transactions', { screen: 'AllTransactionsMain' }) }]
             );
 
         } catch (error) {
@@ -73,6 +75,149 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                 'Error',
                 error.message || 'Failed to link inventory. Please try again.'
             );
+        }
+    };
+
+    // NEW: Handle multiple item selection modal
+    const handleOpenMultiItemModal = () => {
+        const match = localTransaction.inventoryMatch;
+        if (match && match.matchType === 'multiple') {
+            // Pre-populate with suggested quantities
+            const preSelected = match.matches.map(m => ({
+                item: m.item,
+                quantity: m.suggestedQuantity || 1
+            }));
+            setSelectedItems(preSelected);
+            setShowMultiItemModal(true);
+        }
+    };
+
+    // NEW: Update quantity for a selected item
+    const updateItemQuantity = (itemId, change) => {
+        setSelectedItems(prev =>
+            prev.map(si => {
+                if (si.item.id === itemId) {
+                    const newQty = Math.max(0, si.quantity + change);
+                    return { ...si, quantity: newQty };
+                }
+                return si;
+            })
+        );
+    };
+
+    // NEW: Remove item from selection
+    const removeItem = (itemId) => {
+        setSelectedItems(prev => prev.filter(si => si.item.id !== itemId));
+    };
+
+    // NEW: Confirm multiple items
+    const handleConfirmMultipleItems = async () => {
+        try {
+            const validItems = selectedItems.filter(si => si.quantity > 0);
+
+            if (validItems.length === 0) {
+                Alert.alert('No Items Selected', 'Please select at least one item with quantity > 0');
+                return;
+            }
+
+            // Calculate total value
+            const totalValue = validItems.reduce((sum, si) =>
+                sum + (si.item.unitPrice * si.quantity), 0
+            );
+
+            // Verify total matches transaction amount
+            const transactionAmount = Math.abs(Number(localTransaction.amount));
+            const difference = Math.abs(totalValue - transactionAmount);
+
+            if (difference > 1) { // Allow 1 Ksh difference for rounding
+                Alert.alert(
+                    'Amount Mismatch',
+                    `Selected items total: Ksh ${totalValue.toLocaleString()}\n` +
+                    `Transaction amount: Ksh ${transactionAmount.toLocaleString()}\n\n` +
+                    `Difference: Ksh ${difference.toLocaleString()}\n\n` +
+                    `Do you want to proceed anyway?`,
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Proceed', onPress: () => confirmMultipleItemsLink(validItems) }
+                    ]
+                );
+            } else {
+                await confirmMultipleItemsLink(validItems);
+            }
+
+        } catch (error) {
+            console.error('handleConfirmMultipleItems error:', error);
+            Alert.alert('Error', 'Failed to link items');
+        }
+    };
+
+    // NEW: Actually link multiple items
+    const confirmMultipleItemsLink = async (validItems) => {
+        try {
+            // Deduct stock for each item
+            const inventory = await InventoryStorage.loadInventory();
+
+            for (const si of validItems) {
+                const itemIndex = inventory.findIndex(item => item.id === si.item.id);
+                if (itemIndex !== -1) {
+                    if (inventory[itemIndex].quantity < si.quantity) {
+                        throw new Error(`Insufficient stock for ${si.item.name}`);
+                    }
+                    inventory[itemIndex].quantity -= si.quantity;
+                }
+            }
+
+            await InventoryStorage.saveInventory(inventory);
+
+            // Update transaction
+            const updated = {
+                ...localTransaction,
+                inventoryMatch: {
+                    ...localTransaction.inventoryMatch,
+                    userConfirmed: true,
+                    confirmedAt: new Date().toISOString(),
+                },
+                isMultiItem: true,
+                stockDeducted: true,
+                items: validItems.map(si => ({
+                    id: si.item.id,
+                    name: si.item.name,
+                    quantity: si.quantity,
+                    unitPrice: si.item.unitPrice,
+                    wholesalePrice: si.item.wholesalePrice || si.item.unitPrice,
+                    total: si.item.unitPrice * si.quantity
+                }))
+            };
+
+            // Save transaction
+            const allTransactions = await TransactionStorage.loadTransactions();
+            const txIndex = allTransactions.findIndex(t => t.id === localTransaction.id);
+            if (txIndex !== -1) {
+                allTransactions[txIndex] = updated;
+                await TransactionStorage.saveTransactions(allTransactions);
+            }
+
+            // Update profit report
+            await ProfitReportStorage.addSale({
+                ...updated,
+                timestamp: updated.timestamp || updated.date
+            });
+
+            setLocalTransaction(updated);
+            setShowMultiItemModal(false);
+
+            DeviceEventEmitter.emit('profitReportUpdated');
+            DeviceEventEmitter.emit('transactions:updated');
+
+            Alert.alert(
+                '✅ Multiple Items Linked',
+                `Linked ${validItems.length} items to this transaction\nInventory and profit report updated!`,
+                [{ text: 'Great!', onPress: () => navigation.navigate('Transactions', { screen: 'AllTransactionsMain' }) }]
+            );
+
+        } catch (error) {
+            console.error('confirmMultipleItemsLink error:', error);
+            Alert.alert('Error', error.message || 'Failed to link items');
         }
     };
 
@@ -97,7 +242,7 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
             Alert.alert(
                 'Match Dismissed',
                 'This suggestion won\'t show again for this transaction.',
-                [{ text: 'OK', onPress: () => navigation.goBack() }]
+                [{ text: 'OK', onPress: () => navigation.navigate('Transactions', { screen: 'AllTransactionsMain' }) }]
             );
 
         } catch (error) {
@@ -106,7 +251,7 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         }
     };
 
-    // Render match suggestion card (single match)
+    // Render single match suggestion
     const renderSingleMatchSuggestion = () => {
         const match = localTransaction.inventoryMatch;
         if (!match || match.matchType !== 'single') return null;
@@ -147,7 +292,7 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         );
     };
 
-    // Render match suggestion card (multiple matches)
+    // NEW: Render multiple match suggestion with option to select multiple items
     const renderMultipleMatchSuggestion = () => {
         const match = localTransaction.inventoryMatch;
         if (!match || match.matchType !== 'multiple') return null;
@@ -161,8 +306,10 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                         {match.matches.length} Possible Matches
                     </Text>
                 </View>
-                <Text style={styles.suggestionSubtitle}>Select the item that was sold:</Text>
-                {match.matches.map((m, idx) => (
+                <Text style={styles.suggestionSubtitle}>
+                    Select one item or multiple items that were sold:
+                </Text>
+                {match.matches.slice(0, 3).map((m, idx) => (
                     <TouchableOpacity
                         key={idx}
                         style={styles.matchOption}
@@ -177,20 +324,30 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                         <ArrowUpRight size={18} color={Colors.primary} />
                     </TouchableOpacity>
                 ))}
-                <TouchableOpacity
-                    style={[styles.dismissBtn, { marginTop: Spacing.sm }]}
-                    onPress={handleDismissMatch}
-                >
-                    <XCircle size={16} color={Colors.textSecondary} />
-                    <Text style={styles.dismissText}>None of these</Text>
-                </TouchableOpacity>
+
+                <View style={styles.suggestionActions}>
+                    <TouchableOpacity
+                        style={styles.dismissBtn}
+                        onPress={handleDismissMatch}
+                    >
+                        <XCircle size={16} color={Colors.textSecondary} />
+                        <Text style={styles.dismissText}>None of these</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.confirmBtn}
+                        onPress={handleOpenMultiItemModal}
+                    >
+                        <Plus size={16} color={Colors.surface} />
+                        <Text style={styles.confirmText}>Link Multiple Items</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
         );
     };
 
     // Render confirmed linked inventory
     const renderLinkedInventory = () => {
-        if (!localTransaction.linkedInventoryId) return null;
+        if (!localTransaction.linkedInventoryId && !localTransaction.items) return null;
 
         return (
             <View style={[styles.section, styles.inventorySection]}>
@@ -199,15 +356,44 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     <Text style={[styles.sectionTitle, { marginLeft: 8 }]}>Linked Inventory</Text>
                 </View>
                 <View style={styles.card}>
-                    <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Item</Text>
-                        <Text style={styles.detailValue}>{localTransaction.linkedInventoryName}</Text>
-                    </View>
-                    {localTransaction.saleQuantity && (
-                        <View style={styles.detailRow}>
-                            <Text style={styles.detailLabel}>Quantity</Text>
-                            <Text style={styles.detailValue}>{localTransaction.saleQuantity} units</Text>
-                        </View>
+                    {localTransaction.isMultiItem && localTransaction.items ? (
+                        <>
+                            <Text style={styles.multiItemHeader}>
+                                {localTransaction.items.length} items linked
+                            </Text>
+                            {localTransaction.items.map((item, idx) => (
+                                <View key={idx} style={styles.linkedItem}>
+                                    <View style={styles.linkedItemLeft}>
+                                        <Text style={styles.linkedItemName}>{item.name}</Text>
+                                        <Text style={styles.linkedItemQty}>
+                                            {item.quantity} × Ksh {item.unitPrice.toLocaleString()}
+                                        </Text>
+                                    </View>
+                                    <Text style={styles.linkedItemTotal}>
+                                        Ksh {item.total.toLocaleString()}
+                                    </Text>
+                                </View>
+                            ))}
+                            <View style={styles.linkedItemTotal}>
+                                <Text style={styles.linkedTotalLabel}>Total:</Text>
+                                <Text style={styles.linkedTotalValue}>
+                                    Ksh {localTransaction.items.reduce((s, i) => s + i.total, 0).toLocaleString()}
+                                </Text>
+                            </View>
+                        </>
+                    ) : (
+                        <>
+                            <View style={styles.detailRow}>
+                                <Text style={styles.detailLabel}>Item</Text>
+                                <Text style={styles.detailValue}>{localTransaction.linkedInventoryName}</Text>
+                            </View>
+                            {localTransaction.saleQuantity && (
+                                <View style={styles.detailRow}>
+                                    <Text style={styles.detailLabel}>Quantity</Text>
+                                    <Text style={styles.detailValue}>{localTransaction.saleQuantity} units</Text>
+                                </View>
+                            )}
+                        </>
                     )}
                     <View style={styles.detailRow}>
                         <Text style={styles.detailLabel}>Stock Updated</Text>
@@ -234,8 +420,11 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                             const allTransactions = await TransactionStorage.loadTransactions();
                             const updated = allTransactions.filter(t => t.id !== localTransaction.id);
                             await TransactionStorage.saveTransactions(updated);
+
+                            DeviceEventEmitter.emit('transactions:updated');
+
                             Alert.alert('Deleted', 'Transaction removed', [
-                                { text: 'OK', onPress: () => navigation.goBack() }
+                                { text: 'OK', onPress: () => navigation.navigate('Transactions', { screen: 'AllTransactionsMain' }) }
                             ]);
                         } catch (error) {
                             Alert.alert('Error', 'Failed to delete transaction');
@@ -260,7 +449,10 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
             {/* Header */}
             <View style={styles.headerRow}>
-                <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+                <TouchableOpacity
+                    style={styles.backButton}
+                    onPress={() => navigation.navigate('Transactions', { screen: 'AllTransactionsMain' })}
+                >
                     <ArrowLeft size={22} color={Colors.text} />
                 </TouchableOpacity>
                 <Text style={styles.screenTitle}>Transaction Details</Text>
@@ -289,11 +481,11 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                 )}
             </View>
 
-            {/* NEW: Match Suggestions (show before other details) */}
+            {/* Match Suggestions */}
             {renderSingleMatchSuggestion()}
             {renderMultipleMatchSuggestion()}
 
-            {/* NEW: Linked Inventory (after confirmation) */}
+            {/* Linked Inventory */}
             {renderLinkedInventory()}
 
             {/* Transaction Details */}
@@ -356,31 +548,6 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                 </View>
             )}
 
-            {/* Business Score */}
-            {localTransaction.score !== undefined && (
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Business Score</Text>
-                    <View style={styles.card}>
-                        <View style={styles.scoreContainer}>
-                            <View style={styles.scoreCircle}>
-                                <Text style={styles.scoreValue}>{localTransaction.score}</Text>
-                                <Text style={styles.scoreLabel}>/ 100</Text>
-                            </View>
-                            <View style={styles.scoreInfo}>
-                                <Text style={styles.scoreTitle}>
-                                    {localTransaction.score >= 70 ? 'High Confidence' :
-                                        localTransaction.score >= 40 ? 'Medium Confidence' : 'Low Confidence'}
-                                </Text>
-                                <Text style={styles.scoreSubtitle}>
-                                    {localTransaction.score >= 70 ? 'Likely a business transaction' :
-                                        localTransaction.score >= 40 ? 'Possibly a business transaction' : 'Likely a personal transaction'}
-                                </Text>
-                            </View>
-                        </View>
-                    </View>
-                </View>
-            )}
-
             {/* Actions */}
             <View style={styles.section}>
                 <Button
@@ -393,6 +560,91 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
             </View>
 
             <View style={{ height: 40 }} />
+
+            {/* NEW: Multi-Item Selection Modal */}
+            <Modal
+                visible={showMultiItemModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowMultiItemModal(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setShowMultiItemModal(false)}
+                >
+                    <Pressable
+                        style={styles.multiItemModal}
+                        onPress={(e) => e.stopPropagation()}
+                    >
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Select Multiple Items</Text>
+                            <TouchableOpacity onPress={() => setShowMultiItemModal(false)}>
+                                <XCircle size={24} color={Colors.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView style={styles.modalContent}>
+                            {selectedItems.map((si, idx) => (
+                                <View key={idx} style={styles.itemRow}>
+                                    <View style={styles.itemInfo}>
+                                        <Text style={styles.itemName}>{si.item.name}</Text>
+                                        <Text style={styles.itemPrice}>
+                                            Ksh {si.item.unitPrice.toLocaleString()} each
+                                        </Text>
+                                    </View>
+                                    <View style={styles.quantityControls}>
+                                        <TouchableOpacity
+                                            style={styles.qtyBtn}
+                                            onPress={() => updateItemQuantity(si.item.id, -1)}
+                                        >
+                                            <Minus size={16} color={Colors.text} />
+                                        </TouchableOpacity>
+                                        <Text style={styles.qtyText}>{si.quantity}</Text>
+                                        <TouchableOpacity
+                                            style={styles.qtyBtn}
+                                            onPress={() => updateItemQuantity(si.item.id, 1)}
+                                        >
+                                            <Plus size={16} color={Colors.text} />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={styles.removeBtn}
+                                            onPress={() => removeItem(si.item.id)}
+                                        >
+                                            <Trash2 size={16} color={Colors.error} />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            ))}
+
+                            <View style={styles.totalSection}>
+                                <Text style={styles.totalLabel}>Total Selected:</Text>
+                                <Text style={styles.totalValue}>
+                                    Ksh {selectedItems.reduce((sum, si) =>
+                                        sum + (si.item.unitPrice * si.quantity), 0
+                                    ).toLocaleString()}
+                                </Text>
+                            </View>
+                        </ScrollView>
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={styles.cancelModalBtn}
+                                onPress={() => setShowMultiItemModal(false)}
+                            >
+                                <Text style={styles.cancelModalText}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.confirmModalBtn}
+                                onPress={handleConfirmMultipleItems}
+                            >
+                                <Text style={styles.confirmModalText}>
+                                    Link {selectedItems.filter(si => si.quantity > 0).length} Items
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </ScrollView>
     );
 };
@@ -450,22 +702,8 @@ const styles = StyleSheet.create({
     detailValue: { ...Typography.body, color: Colors.text, fontWeight: '600', textAlign: 'right', flex: 1 },
     messageContainer: { flexDirection: 'row', alignItems: 'flex-start' },
     messageText: { ...Typography.body, color: Colors.text, flex: 1, lineHeight: 20 },
-    scoreContainer: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-    scoreCircle: {
-        width: 80,
-        height: 80,
-        borderRadius: 40,
-        backgroundColor: Colors.primary + '20',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    scoreValue: { ...Typography.title, fontSize: 28, color: Colors.primary, fontWeight: '800' },
-    scoreLabel: { ...Typography.caption, color: Colors.primary },
-    scoreInfo: { flex: 1 },
-    scoreTitle: { ...Typography.body, color: Colors.text, fontWeight: '600', marginBottom: 4 },
-    scoreSubtitle: { ...Typography.caption, color: Colors.textSecondary },
 
-    // NEW: Match suggestion styles
+    // Match suggestion styles
     suggestionCard: {
         backgroundColor: '#fefce8',
         borderLeftWidth: 4,
@@ -576,6 +814,195 @@ const styles = StyleSheet.create({
         backgroundColor: '#ecfdf5',
         borderLeftWidth: 4,
         borderLeftColor: Colors.success,
+    },
+    multiItemHeader: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: Spacing.sm,
+        paddingBottom: Spacing.xs,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    linkedItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.xs,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f8fafc',
+    },
+    linkedItemLeft: {
+        flex: 1,
+    },
+    linkedItemName: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.text,
+        marginBottom: 2,
+    },
+    linkedItemQty: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+    },
+    linkedItemTotal: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    linkedTotalLabel: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.text,
+        marginTop: Spacing.sm,
+        paddingTop: Spacing.sm,
+        borderTopWidth: 2,
+        borderTopColor: Colors.border,
+    },
+    linkedTotalValue: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: Colors.success,
+        marginTop: 4,
+    },
+
+    // Multi-Item Modal Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'flex-end',
+    },
+    multiItemModal: {
+        backgroundColor: Colors.surface,
+        borderTopLeftRadius: BorderRadius.xl,
+        borderTopRightRadius: BorderRadius.xl,
+        maxHeight: '80%',
+        ...Shadows.lg,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: Spacing.lg,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    modalContent: {
+        padding: Spacing.md,
+        maxHeight: 400,
+    },
+    itemRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+        padding: Spacing.md,
+        borderRadius: BorderRadius.md,
+        marginBottom: Spacing.sm,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    itemInfo: {
+        flex: 1,
+        marginRight: Spacing.sm,
+    },
+    itemName: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 4,
+    },
+    itemPrice: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+    },
+    quantityControls: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    qtyBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    qtyText: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: Colors.text,
+        minWidth: 30,
+        textAlign: 'center',
+    },
+    removeBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#FEE2E2',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: Spacing.xs,
+    },
+    totalSection: {
+        backgroundColor: Colors.surface,
+        padding: Spacing.md,
+        borderRadius: BorderRadius.md,
+        marginTop: Spacing.sm,
+        borderWidth: 2,
+        borderColor: Colors.primary,
+    },
+    totalLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: Colors.textSecondary,
+        marginBottom: 4,
+    },
+    totalValue: {
+        fontSize: 24,
+        fontWeight: '800',
+        color: Colors.primary,
+    },
+    modalActions: {
+        flexDirection: 'row',
+        padding: Spacing.md,
+        gap: Spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: Colors.border,
+    },
+    cancelModalBtn: {
+        flex: 1,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.md,
+        backgroundColor: Colors.background,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        alignItems: 'center',
+    },
+    cancelModalText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.text,
+    },
+    confirmModalBtn: {
+        flex: 2,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.md,
+        backgroundColor: Colors.primary,
+        alignItems: 'center',
+    },
+    confirmModalText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.surface,
     },
 });
 

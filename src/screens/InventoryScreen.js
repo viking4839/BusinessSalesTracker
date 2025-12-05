@@ -9,13 +9,30 @@ import {
     TextInput,
     Animated,
     StatusBar,
+    Modal,
+    Alert,
+    Platform,
 } from 'react-native';
-import { Plus, Search, X, Package, TrendingDown, Calendar, AlertTriangle } from 'lucide-react-native';
+import {
+    Plus,
+    Search,
+    X,
+    Package,
+    TrendingDown,
+    Calendar,
+    AlertTriangle,
+    Settings,
+    Trash2,
+    Tag,
+    Check,
+    MoreVertical,
+    Edit2,
+} from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import AddInventoryItemDialog from '../components/AddInventoryItemDialog';
 import InventoryStorage from '../utils/InventoryStorage';
 import NotificationService from '../services/NotificationService';
-import { Colors, Spacing, BorderRadius } from '../styles/Theme';
+import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 
 const InventoryScreen = ({ navigation, route }) => {
     const [inventory, setInventory] = useState([]);
@@ -26,6 +43,12 @@ const InventoryScreen = ({ navigation, route }) => {
     const [searchExpanded, setSearchExpanded] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchWidth] = useState(new Animated.Value(40));
+
+    // Category Management
+    const [showCategoryModal, setShowCategoryModal] = useState(false);
+    const [newCategoryName, setNewCategoryName] = useState('');
+    const [editingCategory, setEditingCategory] = useState(null);
+    const [showBottomSheet, setShowBottomSheet] = useState(false);
 
     useFocusEffect(
         useCallback(() => {
@@ -44,7 +67,6 @@ const InventoryScreen = ({ navigation, route }) => {
                 setCategories(['All', ...catList]);
             }
 
-            // Check for low stock and expiry alerts
             await NotificationService.checkInventoryAlerts();
         } catch (e) {
             console.error('❌ Inventory load error', e);
@@ -76,6 +98,62 @@ const InventoryScreen = ({ navigation, route }) => {
         }
     };
 
+    // Category Management Functions
+    const handleAddCategory = async () => {
+        const trimmed = newCategoryName.trim();
+        if (!trimmed) {
+            Alert.alert('Required', 'Please enter category name');
+            return;
+        }
+
+        if (categories.includes(trimmed)) {
+            Alert.alert('Exists', 'This category already exists');
+            return;
+        }
+
+        await InventoryStorage.addCategory(trimmed);
+        setCategories(prev => [...prev, trimmed]);
+        setNewCategoryName('');
+        Alert.alert('✅ Success', `Category "${trimmed}" added`);
+    };
+
+    const handleDeleteCategory = (categoryName) => {
+        if (categoryName === 'All') return;
+
+        // Check if category has items
+        const itemsInCategory = inventory.filter(item => item.category === categoryName);
+
+        if (itemsInCategory.length > 0) {
+            Alert.alert(
+                'Cannot Delete',
+                `This category has ${itemsInCategory.length} items. Move or delete them first.`,
+                [{ text: 'OK' }]
+            );
+            return;
+        }
+
+        Alert.alert(
+            'Delete Category',
+            `Are you sure you want to delete "${categoryName}"?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await InventoryStorage.deleteCategory(categoryName);
+                        setCategories(prev => prev.filter(c => c !== categoryName));
+                        if (selectedCategory === categoryName) {
+                            setSelectedCategory('All');
+                        }
+                        setShowCategoryModal(false);
+                        Alert.alert('✅ Deleted', `Category "${categoryName}" removed`);
+                    }
+                }
+            ]
+        );
+    };
+
     const filteredInventory = inventory.filter(item => {
         const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
         const matchesSearch = !searchQuery ||
@@ -88,14 +166,24 @@ const InventoryScreen = ({ navigation, route }) => {
     };
 
     const handleDeleteItem = async (item) => {
-        await InventoryStorage.deleteItem(item.id);
-        loadAll();
+        Alert.alert(
+            'Delete Item',
+            `Delete "${item.name}"?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await InventoryStorage.deleteItem(item.id);
+                        loadAll();
+                    }
+                }
+            ]
+        );
     };
 
-    // Helper functions for item status
-    const isLowStock = (item) => {
-        return item.quantity <= (item.lowStockThreshold || 5);
-    };
+    const isLowStock = (item) => item.quantity <= (item.lowStockThreshold || 5);
 
     const isExpiringSoon = (item) => {
         if (!item.expiryDate) return false;
@@ -114,6 +202,101 @@ const InventoryScreen = ({ navigation, route }) => {
         if (isLowStock(item)) return 'low';
         return 'good';
     };
+
+    // Bottom Sheet for Category Management
+    const renderBottomSheet = () => (
+        <Modal
+            visible={showBottomSheet}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setShowBottomSheet(false)}
+        >
+            <View style={styles.bottomSheetOverlay}>
+                <View style={styles.bottomSheetContent}>
+                    {/* Handle Bar */}
+                    <View style={styles.handleBar} />
+
+                    {/* Header */}
+                    <View style={styles.bottomSheetHeader}>
+                        <Text style={styles.bottomSheetTitle}>Manage Categories</Text>
+                        <TouchableOpacity onPress={() => setShowBottomSheet(false)}>
+                            <X size={24} color={Colors.text} />
+                        </TouchableOpacity>
+                    </View>
+
+                    <FlatList
+                        data={[{ type: 'add' }, ...categories.filter(c => c !== 'All').map(c => ({ type: 'category', name: c }))]}
+                        keyExtractor={(item, idx) => item.name || idx.toString()}
+                        scrollEnabled={true}
+                        ListHeaderComponent={
+                            <View style={styles.bottomSheetSection}>
+                                <Text style={styles.sectionLabel}>
+                                    Categories ({categories.filter(c => c !== 'All').length})
+                                </Text>
+                            </View>
+                        }
+                        renderItem={({ item }) => {
+                            if (item.type === 'add') {
+                                return (
+                                    <View style={styles.addCategoryBox}>
+                                        <View style={styles.addCategoryInputRow}>
+                                            <TextInput
+                                                style={styles.categoryInputField}
+                                                placeholder="New category name"
+                                                placeholderTextColor={Colors.textLight}
+                                                value={newCategoryName}
+                                                onChangeText={setNewCategoryName}
+                                            />
+                                            <TouchableOpacity
+                                                style={styles.addCategorySubmitBtn}
+                                                onPress={handleAddCategory}
+                                            >
+                                                <Plus size={20} color={Colors.surface} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+                                );
+                            }
+
+                            const itemCount = inventory.filter(i => i.category === item.name).length;
+                            const hasItems = itemCount > 0;
+
+                            return (
+                                <View style={styles.categoryItemRow}>
+                                    <View style={styles.categoryItemInfo}>
+                                        <View style={styles.categoryIconCircle}>
+                                            <Tag size={16} color={Colors.primary} />
+                                        </View>
+                                        <View>
+                                            <Text style={styles.categoryItemName}>{item.name}</Text>
+                                            <Text style={styles.categoryItemCount}>
+                                                {itemCount} {itemCount === 1 ? 'item' : 'items'}
+                                            </Text>
+                                        </View>
+                                    </View>
+
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.deleteCategoryBtn,
+                                            hasItems && styles.deleteCategoryBtnDisabled
+                                        ]}
+                                        onPress={() => handleDeleteCategory(item.name)}
+                                        disabled={hasItems}
+                                    >
+                                        <Trash2
+                                            size={18}
+                                            color={hasItems ? Colors.textLight : Colors.error}
+                                        />
+                                    </TouchableOpacity>
+                                </View>
+                            );
+                        }}
+                        contentContainerStyle={styles.bottomSheetList}
+                    />
+                </View>
+            </View>
+        </Modal>
+    );
 
     const renderAddCard = () => (
         <TouchableOpacity
@@ -139,18 +322,17 @@ const InventoryScreen = ({ navigation, route }) => {
         const actualItem = filteredInventory[index - 1];
         const status = getStockStatus(actualItem);
 
-        // Determine card color based on status
-        let cardColor = '#FFFFFF'; // Default white
+        let cardColor = '#FFFFFF';
         let borderColor = Colors.border;
 
         if (status === 'expired') {
-            cardColor = '#FEE2E2'; // Light red
+            cardColor = '#FEE2E2';
             borderColor = '#FCA5A5';
         } else if (status === 'expiring') {
-            cardColor = '#FEF3C7'; // Light yellow
+            cardColor = '#FEF3C7';
             borderColor = '#FCD34D';
         } else if (status === 'low') {
-            cardColor = '#FFEDD5'; // Light orange
+            cardColor = '#FFEDD5';
             borderColor = '#FDBA74';
         }
 
@@ -161,7 +343,6 @@ const InventoryScreen = ({ navigation, route }) => {
                 onPress={() => navigation.navigate('EditInventoryItem', { item: actualItem })}
                 onLongPress={() => handleDeleteItem(actualItem)}
             >
-                {/* Status Badge */}
                 {status !== 'good' && (
                     <View style={[
                         styles.statusBadge,
@@ -174,13 +355,8 @@ const InventoryScreen = ({ navigation, route }) => {
                     </View>
                 )}
 
-                {/* Item Icon */}
-      
-
-                {/* Item Name */}
                 <Text numberOfLines={2} style={styles.gridName}>{actualItem.name}</Text>
 
-                {/* Quantity with visual indicator */}
                 <View style={styles.quantitySection}>
                     <View style={styles.quantityBar}>
                         <View
@@ -204,13 +380,11 @@ const InventoryScreen = ({ navigation, route }) => {
                     </View>
                 </View>
 
-                {/* Price */}
                 <View style={styles.priceRow}>
                     <Text style={styles.priceLabel}>Price:</Text>
                     <Text style={styles.priceValue}>Ksh {actualItem.unitPrice.toLocaleString()}</Text>
                 </View>
 
-                {/* Footer with category and expiry */}
                 <View style={styles.gridFooter}>
                     <View style={styles.categoryBadge}>
                         <Text style={styles.categoryText}>{actualItem.category}</Text>
@@ -239,7 +413,6 @@ const InventoryScreen = ({ navigation, route }) => {
         </View>
     );
 
-    // Summary stats
     const totalItems = inventory.length;
     const lowStockCount = inventory.filter(item => isLowStock(item)).length;
     const expiringCount = inventory.filter(item => isExpiringSoon(item) || isExpired(item)).length;
@@ -257,31 +430,33 @@ const InventoryScreen = ({ navigation, route }) => {
                     <Text style={styles.subtitle}>{totalItems} items in stock</Text>
                 </View>
 
-                <Animated.View style={[styles.searchContainer, { width: searchWidth }]}>
-                    {searchExpanded ? (
-                        <>
-                            <Search size={18} color={Colors.textSecondary} />
-                            <TextInput
-                                style={styles.searchInput}
-                                placeholder="Search items..."
-                                placeholderTextColor={Colors.textLight}
-                                value={searchQuery}
-                                onChangeText={setSearchQuery}
-                                autoFocus
-                            />
-                            <TouchableOpacity onPress={toggleSearch}>
-                                <X size={18} color={Colors.textSecondary} />
+                <View style={styles.headerActions}>
+                    <Animated.View style={[styles.searchContainer, { width: searchWidth }]}>
+                        {searchExpanded ? (
+                            <>
+                                <Search size={18} color={Colors.textSecondary} />
+                                <TextInput
+                                    style={styles.searchInput}
+                                    placeholder="Search items..."
+                                    placeholderTextColor={Colors.textLight}
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                    autoFocus
+                                />
+                                <TouchableOpacity onPress={toggleSearch}>
+                                    <X size={18} color={Colors.textSecondary} />
+                                </TouchableOpacity>
+                            </>
+                        ) : (
+                            <TouchableOpacity style={styles.searchBtn} onPress={toggleSearch}>
+                                <Search size={20} color={Colors.primary} />
                             </TouchableOpacity>
-                        </>
-                    ) : (
-                        <TouchableOpacity style={styles.searchBtn} onPress={toggleSearch}>
-                            <Search size={20} color={Colors.primary} />
-                        </TouchableOpacity>
-                    )}
-                </Animated.View>
+                        )}
+                    </Animated.View>
+                </View>
             </View>
 
-            {/* Alert Badges (if any issues) */}
+            {/* Alert Badges */}
             {(lowStockCount > 0 || expiringCount > 0) && (
                 <View style={styles.alertsContainer}>
                     {lowStockCount > 0 && (
@@ -299,7 +474,7 @@ const InventoryScreen = ({ navigation, route }) => {
                 </View>
             )}
 
-            {/* Category chips */}
+            {/* Category Filters */}
             <View style={styles.filterContainer}>
                 <FlatList
                     horizontal
@@ -325,9 +500,17 @@ const InventoryScreen = ({ navigation, route }) => {
                         </TouchableOpacity>
                     )}
                 />
+
+                {/* Category Manager Button */}
+                <TouchableOpacity
+                    style={styles.categoryManagerBtn}
+                    onPress={() => setShowBottomSheet(true)}
+                >
+                    <Settings size={16} color={Colors.surface} />
+                </TouchableOpacity>
             </View>
 
-            {/* Grid list */}
+            {/* Grid List */}
             <FlatList
                 data={gridData}
                 keyExtractor={(item, idx) => item.id || idx.toString()}
@@ -344,6 +527,8 @@ const InventoryScreen = ({ navigation, route }) => {
                     />
                 }
             />
+
+            {renderBottomSheet()}
 
             <AddInventoryItemDialog
                 visible={showAddDialog}
@@ -380,6 +565,11 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: 'rgba(255, 255, 255, 0.8)',
         marginTop: 2,
+    },
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
     },
     searchContainer: {
         flexDirection: 'row',
@@ -429,16 +619,18 @@ const styles = StyleSheet.create({
         color: '#F97316',
     },
     filterContainer: {
+        flexDirection: 'row',
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm,
         backgroundColor: Colors.background,
+        alignItems: 'center',
+        gap: Spacing.sm,
     },
     filterChip: {
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.xs,
         borderRadius: 20,
         backgroundColor: Colors.surface,
-        marginRight: Spacing.xs,
         borderWidth: 1,
         borderColor: Colors.border,
         minHeight: 36,
@@ -455,6 +647,15 @@ const styles = StyleSheet.create({
     },
     filterTextActive: {
         color: Colors.surface,
+    },
+    categoryManagerBtn: {
+        width: 36,
+        height: 36,
+        backgroundColor: Colors.primary,
+        borderRadius: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 'auto',
     },
     gridContainer: {
         paddingHorizontal: Spacing.md,
@@ -474,11 +675,7 @@ const styles = StyleSheet.create({
         borderColor: Colors.border,
         minHeight: 180,
         position: 'relative',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
+        ...Shadows.sm,
     },
     addCard: {
         backgroundColor: Colors.surface,
@@ -530,15 +727,6 @@ const styles = StyleSheet.create({
     expiredBadge: {
         backgroundColor: '#DC2626',
     },
-  /*   itemIconContainer: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        backgroundColor: Colors.primary + '15',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: Spacing.sm,
-    }, */
     gridName: {
         fontSize: 16,
         fontWeight: '700',
@@ -634,6 +822,132 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: Colors.textSecondary,
         textAlign: 'center',
+    },
+    // Bottom Sheet Styles
+    bottomSheetOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        justifyContent: 'flex-end',
+    },
+    bottomSheetContent: {
+        backgroundColor: Colors.surface,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        maxHeight: '85%',
+        paddingBottom: Platform.OS === 'ios' ? Spacing.xl : Spacing.lg,
+        ...Shadows.lg,
+    },
+    handleBar: {
+        width: 48,
+        height: 4,
+        backgroundColor: Colors.border,
+        borderRadius: 2,
+        alignSelf: 'center',
+        marginTop: 8,
+        marginBottom: 8,
+    },
+    bottomSheetHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    bottomSheetTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    bottomSheetSection: {
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.borderLight,
+        marginBottom: Spacing.sm,
+    },
+    sectionLabel: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.textSecondary,
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+    },
+    bottomSheetList: {
+        paddingHorizontal: Spacing.lg,
+    },
+    addCategoryBox: {
+        marginVertical: Spacing.md,
+    },
+    addCategoryInputRow: {
+        flexDirection: 'row',
+        gap: Spacing.sm,
+    },
+    categoryInputField: {
+        flex: 1,
+        backgroundColor: Colors.background,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: BorderRadius.md,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
+        fontSize: 15,
+        color: Colors.text,
+    },
+    addCategorySubmitBtn: {
+        backgroundColor: Colors.primary,
+        width: 48,
+        borderRadius: BorderRadius.md,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    categoryItemRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.md,
+        marginVertical: Spacing.xs,
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    categoryItemInfo: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+    },
+    categoryIconCircle: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: Colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    categoryItemName: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.text,
+    },
+    categoryItemCount: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        marginTop: 2,
+    },
+    deleteCategoryBtn: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        backgroundColor: Colors.error + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    deleteCategoryBtnDisabled: {
+        backgroundColor: Colors.borderLight,
     },
 });
 

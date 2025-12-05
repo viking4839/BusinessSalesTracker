@@ -11,10 +11,14 @@ import {
     Switch,
     Platform,
     DeviceEventEmitter,
+    ActivityIndicator,
+    FlatList,
 } from 'react-native';
-import { X, DollarSign, User, Phone, Package, Trash2, Plus, Minus } from 'lucide-react-native';
+import { X, DollarSign, User, Phone, Package, Trash2, Plus, Minus, Zap, ChevronDown, Check } from 'lucide-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import InventoryStorage from '../utils/InventoryStorage';
 import ProfitReportStorage from '../utils/ProfitReportStorage';
+import SMSReader from '../services/SMSReader';
 import { Colors, Spacing, BorderRadius } from '../styles/Theme';
 
 const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
@@ -26,10 +30,18 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
     const [linkInventory, setLinkInventory] = useState(true);
     const [inventoryItems, setInventoryItems] = useState([]);
     const [cart, setCart] = useState([]);
+    const [showMpesaScanner, setShowMpesaScanner] = useState(false);
+    const [mpesaTransactions, setMpesaTransactions] = useState([]);
+    const [selectedMpesaTransaction, setSelectedMpesaTransaction] = useState(null);
+    const [isScanning, setIsScanning] = useState(false);
+    const [showTransactionList, setShowTransactionList] = useState(false);
+    const [scannedTransactionIds, setScannedTransactionIds] = useState([]);
+    const [amountMismatch, setAmountMismatch] = useState(false);
 
     useEffect(() => {
         if (visible) {
             loadInventory();
+            loadScannedTransactionIds();
             resetForm();
         }
     }, [visible]);
@@ -43,6 +55,23 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
         }
     };
 
+    // Load already scanned transaction IDs from AllTransactionsScreen
+    const loadScannedTransactionIds = async () => {
+        try {
+            const transactions = await AsyncStorage.getItem('transactions');
+            if (transactions) {
+                const parsedTransactions = JSON.parse(transactions);
+                // Extract IDs of transactions that have already been matched/scanned
+                const scannedIds = parsedTransactions
+                    .filter(tx => tx.inventoryMatch && (tx.inventoryMatch.userConfirmed || tx.inventoryMatch.userDismissed))
+                    .map(tx => tx.id);
+                setScannedTransactionIds(scannedIds);
+            }
+        } catch (error) {
+            console.error('Load scanned transaction IDs error:', error);
+        }
+    };
+
     const resetForm = () => {
         setAmount('');
         setCustomerName('');
@@ -50,6 +79,10 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
         setNotes('');
         setPaymentMethod('Cash');
         setCart([]);
+        setShowMpesaScanner(false);
+        setMpesaTransactions([]);
+        setSelectedMpesaTransaction(null);
+        setShowTransactionList(false);
     };
 
     // Cart management
@@ -90,6 +123,11 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
     const getCartTotal = () => cart.reduce((sum, ci) => sum + ci.unitPrice * ci.quantity, 0);
 
     const handleSubmit = async () => {
+        if (paymentMethod === 'M-Pesa' && !selectedMpesaTransaction) {
+            Alert.alert('M-Pesa Transaction Required', 'Please select an M-Pesa transaction to link');
+            return;
+        }
+
         const totalAmount = linkInventory && cart.length > 0 ? getCartTotal() : Number(amount);
 
         if (!totalAmount || totalAmount <= 0) {
@@ -112,19 +150,14 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
 
     const submitSale = async (finalAmount) => {
         if (linkInventory && cart.length > 0) {
-            // STEP 1: Validate all items have sufficient stock BEFORE any updates
             for (const ci of cart) {
                 const inventoryItem = inventoryItems.find(item => item.id === ci.id);
                 if (!inventoryItem || ci.quantity > inventoryItem.quantity) {
-                    Alert.alert(
-                        'Insufficient Stock', 
-                        `Not enough stock for ${ci.name}. Only ${inventoryItem?.quantity || 0} units available.`
-                    );
+                    Alert.alert('Insufficient Stock', `Not enough stock for ${ci.name}. Only ${inventoryItem?.quantity || 0} units available.`);
                     return;
                 }
             }
 
-            // STEP 2: Update inventory for ALL items
             for (const ci of cart) {
                 const success = await InventoryStorage.adjustQuantity(ci.id, -ci.quantity);
                 if (!success) {
@@ -133,15 +166,13 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                 }
             }
 
-            // STEP 3: Create a SINGLE combined sale with ALL items
             const combinedSaleData = {
                 amount: finalAmount,
-                customerName,
+                customerName: customerName || selectedMpesaTransaction?.sender || 'Unknown',
                 phone,
                 notes: notes || `Sale with ${cart.length} item(s)`,
                 paymentMethod,
                 timestamp: new Date().toISOString(),
-                // CRITICAL: Include ALL items in a single transaction
                 items: cart.map(ci => ({
                     id: ci.id,
                     name: ci.name,
@@ -151,34 +182,31 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                     total: ci.unitPrice * ci.quantity
                 })),
                 isMultiItem: cart.length > 1,
-                // Legacy fields for backward compatibility (use first item)
                 linkedInventoryId: cart[0].id,
                 linkedInventoryName: cart[0].name,
                 saleQuantity: cart[0].quantity,
+                linkedMpesaTransaction: selectedMpesaTransaction || null,
             };
 
-            console.log(`📦 Recording combined sale with ${cart.length} items:`, 
-                        cart.map(item => `${item.name} (${item.quantity})`).join(', '));
+            console.log(`📦 Recording combined sale with ${cart.length} items:`,
+                cart.map(item => `${item.name} (${item.quantity})`).join(', '));
 
-            // STEP 4: ONE call to onAddSale with ALL the data
             onAddSale(combinedSaleData);
-
         } else {
-            // Non-inventory sale (manual amount entry)
             const saleData = {
                 amount: finalAmount,
-                customerName,
+                customerName: customerName || selectedMpesaTransaction?.sender || 'Unknown',
                 phone,
                 notes,
                 paymentMethod,
                 timestamp: new Date().toISOString(),
                 items: [],
                 isMultiItem: false,
+                linkedMpesaTransaction: selectedMpesaTransaction || null,
             };
             onAddSale(saleData);
         }
 
-        // STEP 5: UI cleanup and success notification
         resetForm();
         onClose();
 
@@ -197,11 +225,124 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
             );
         }, 300);
 
-        // STEP 6: Refresh profit report and navigate
         await ProfitReportStorage.refreshTodaysReport();
         DeviceEventEmitter.emit('profitReportUpdated');
         navigation.navigate('ProfitMarginReport');
     };
+
+    // Handle M-Pesa scan - fetch only NEW transactions
+    const handleMpesaScan = async () => {
+        const hasPermission = await SMSReader.requestPermission();
+        if (!hasPermission) {
+            Alert.alert('Permission Required', 'Please grant SMS permission to scan M-Pesa messages');
+            return;
+        }
+
+        setIsScanning(true);
+        try {
+            // Fetch all recent M-Pesa transactions
+            const allScannedTransactions = await SMSReader.scanRecentTransactions(20);
+
+            if (!allScannedTransactions || allScannedTransactions.length === 0) {
+                Alert.alert('No M-Pesa transactions found', 'Please try again');
+                setIsScanning(false);
+                return;
+            }
+
+            // Filter out already-scanned transactions
+            const newTransactions = allScannedTransactions.filter(tx =>
+                !scannedTransactionIds.includes(tx.id)
+            );
+
+            if (newTransactions.length === 0) {
+                Alert.alert(
+                    'No New Transactions',
+                    'All M-Pesa transactions have already been scanned.\n\nYou can still manually enter the amount or use a previously scanned transaction.',
+                    [{ text: 'OK', style: 'default' }]
+                );
+                setIsScanning(false);
+                return;
+            }
+
+            console.log(`✓ Found ${newTransactions.length} new M-Pesa transaction(s) out of ${allScannedTransactions.length} total`);
+
+            setMpesaTransactions(newTransactions);
+            setShowTransactionList(true);
+        } catch (error) {
+            console.error('M-Pesa scan error:', error);
+            Alert.alert('Error', error.message || 'Failed to scan M-Pesa messages');
+        } finally {
+            setIsScanning(false);
+        }
+    };
+
+    // Handle selecting a specific transaction with validation
+    const handleSelectTransaction = (transaction) => {
+        // Check if cart total matches transaction amount
+        if (linkInventory && cart.length > 0 && cartTotal !== transaction.amount) {
+            setAmountMismatch(true);
+            Alert.alert(
+                '⚠️ Amount Mismatch',
+                `Cart Total: Ksh ${cartTotal.toLocaleString()}\nTransaction: Ksh ${transaction.amount.toLocaleString()}\n\nDo you want to proceed anyway?`,
+                [
+                    { text: 'Cancel', onPress: () => { }, style: 'cancel' },
+                    {
+                        text: 'Proceed',
+                        onPress: () => {
+                            setSelectedMpesaTransaction(transaction);
+                            setAmount(String(transaction.amount));
+                            // Currently you auto-fill from M-Pesa sender
+                            setCustomerName(transaction.sender || transaction.from || '');
+
+                            // Consider: Only set if user hasn't already entered one
+                            if (!customerName) {
+                                setCustomerName(transaction.sender || 'Unknown');
+                            }
+
+                            setShowTransactionList(false);
+                            setScannedTransactionIds([...scannedTransactionIds, transaction.id]);
+                            setAmountMismatch(false);
+                        },
+                        style: 'default'
+                    }
+                ]
+            );
+        } else {
+            // Perfect match or no inventory linking
+            setSelectedMpesaTransaction(transaction);
+            setAmount(String(transaction.amount));
+            // Currently you auto-fill from M-Pesa sender
+            setCustomerName(transaction.sender || transaction.from || '');
+
+            // Consider: Only set if user hasn't already entered one
+            if (!customerName) {
+                setCustomerName(transaction.sender || 'Unknown');
+            }
+
+            setShowTransactionList(false);
+            setScannedTransactionIds([...scannedTransactionIds, transaction.id]);
+            setAmountMismatch(false);
+        }
+    };
+
+    // Handle payment method change
+    const handlePaymentMethodChange = (method) => {
+        setPaymentMethod(method);
+        if (method === 'M-Pesa') {
+            setShowMpesaScanner(!showMpesaScanner);
+        } else {
+            setShowMpesaScanner(false);
+            setSelectedMpesaTransaction(null);
+            setMpesaTransactions([]);
+            setShowTransactionList(false);
+            setAmountMismatch(false);
+        }
+    };
+
+    const cartTotal = getCartTotal();
+    const newTransactionsCount = mpesaTransactions.length;
+    const isAmountMismatch = selectedMpesaTransaction && linkInventory && cart.length > 0 &&
+        cartTotal !== selectedMpesaTransaction.amount;
 
     return (
         <Modal
@@ -234,7 +375,7 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                             <TextInput
                                 style={[styles.input, linkInventory && cart.length > 0 && styles.autoCalculatedInput]}
                                 placeholder="0"
-                                value={linkInventory && cart.length > 0 ? getCartTotal().toString() : amount}
+                                value={linkInventory && cart.length > 0 ? cartTotal.toString() : amount}
                                 onChangeText={setAmount}
                                 keyboardType="numeric"
                                 placeholderTextColor={Colors.textLight}
@@ -242,7 +383,7 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                             />
                             {linkInventory && cart.length > 0 && (
                                 <Text style={styles.helperText}>
-                                    Amount automatically calculated from cart
+                                    Amount automatically calculated from cart (Ksh {cartTotal.toLocaleString()})
                                 </Text>
                             )}
                         </View>
@@ -250,7 +391,7 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                         {/* Link to Inventory Toggle */}
                         <View style={styles.toggleContainer}>
                             <View style={styles.toggleLeft}>
-                                <Package size={18} color={Colors.primary} />
+                                <Package size={18} color={Colors.surface} />
                                 <Text style={styles.toggleLabel}>Link to inventory items</Text>
                             </View>
                             <Switch
@@ -345,7 +486,7 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                                         <View style={styles.cartTotal}>
                                             <Text style={styles.cartTotalLabel}>Cart Total:</Text>
                                             <Text style={styles.cartTotalAmount}>
-                                                Ksh {getCartTotal().toLocaleString()}
+                                                Ksh {cartTotal.toLocaleString()}
                                             </Text>
                                         </View>
                                     </View>
@@ -395,7 +536,7 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                                             styles.paymentChip,
                                             paymentMethod === method && styles.paymentChipActive,
                                         ]}
-                                        onPress={() => setPaymentMethod(method)}
+                                        onPress={() => handlePaymentMethodChange(method)}
                                     >
                                         <Text
                                             style={[
@@ -405,10 +546,181 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                                         >
                                             {method}
                                         </Text>
+                                        {method === 'M-Pesa' && paymentMethod === method && (
+                                            <ChevronDown
+                                                size={14}
+                                                color={Colors.surface}
+                                                style={{ marginLeft: 4, transform: [{ rotate: showMpesaScanner ? '180deg' : '0deg' }] }}
+                                            />
+                                        )}
                                     </TouchableOpacity>
                                 ))}
                             </View>
                         </View>
+
+                        {/* M-Pesa Scanner Section */}
+                        {paymentMethod === 'M-Pesa' && showMpesaScanner && (
+                            <View style={styles.mpesaScannerContainer}>
+                                <View style={styles.scannerHeader}>
+                                    <Zap size={16} color="#16A34A" />
+                                    <Text style={styles.mpesaScannerTitle}>
+                                        {isScanning ? 'Scanning...' : 'Link M-Pesa Transaction'}
+                                    </Text>
+                                </View>
+
+                                {!showTransactionList ? (
+                                    <TouchableOpacity
+                                        style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
+                                        onPress={handleMpesaScan}
+                                        disabled={isScanning}
+                                    >
+                                        {isScanning ? (
+                                            <ActivityIndicator size="small" color="#fff" />
+                                        ) : (
+                                            <Zap size={18} color="#fff" />
+                                        )}
+                                        <Text style={styles.scanButtonText}>
+                                            {isScanning ? 'Scanning...' : 'Scan M-Pesa Messages'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ) : null}
+
+                                {/* Transaction List */}
+                                {showTransactionList && newTransactionsCount > 0 && (
+                                    <View style={styles.transactionListContainer}>
+                                        <View style={styles.transactionListHeader}>
+                                            <Text style={styles.transactionListTitle}>
+                                                New Transactions ({newTransactionsCount})
+                                            </Text>
+                                            {cartTotal > 0 && (
+                                                <Text style={styles.expectedAmountLabel}>
+                                                    Expected: Ksh {cartTotal.toLocaleString()}
+                                                </Text>
+                                            )}
+                                        </View>
+
+                                        <FlatList
+                                            data={mpesaTransactions}
+                                            keyExtractor={(item, index) => `${item.id || index}`}
+                                            scrollEnabled={false}
+                                            renderItem={({ item }) => {
+                                                const isSelected = selectedMpesaTransaction?.id === item.id;
+                                                const isMatchingAmount = cartTotal > 0 && item.amount === cartTotal;
+
+                                                return (
+                                                    <TouchableOpacity
+                                                        style={[
+                                                            styles.transactionItem,
+                                                            isSelected && styles.transactionItemSelected,
+                                                            isMatchingAmount && styles.transactionItemMatching,
+                                                            isSelected && !isMatchingAmount && styles.transactionItemMismatch,
+                                                        ]}
+                                                        onPress={() => handleSelectTransaction(item)}
+                                                    >
+                                                        <View style={styles.transactionItemContent}>
+                                                            <View style={styles.transactionItemHeader}>
+                                                                <Text style={styles.transactionItemFrom}>
+                                                                    {item.sender || item.from || 'Unknown'}
+                                                                </Text>
+                                                                {isMatchingAmount && (
+                                                                    <View style={styles.matchBadge}>
+                                                                        <Text style={styles.matchBadgeText}>✓ Match</Text>
+                                                                    </View>
+                                                                )}
+                                                                {isSelected && !isMatchingAmount && cartTotal > 0 && (
+                                                                    <View style={styles.mismatchBadge}>
+                                                                        <Text style={styles.mismatchBadgeText}>⚠️ Mismatch</Text>
+                                                                    </View>
+                                                                )}
+                                                            </View>
+                                                            <Text style={[
+                                                                styles.transactionItemAmount,
+                                                                isSelected && !isMatchingAmount && cartTotal > 0 && styles.transactionItemAmountMismatch
+                                                            ]}>
+                                                                Ksh {item.amount.toLocaleString()}
+                                                            </Text>
+                                                            {isSelected && !isMatchingAmount && cartTotal > 0 && (
+                                                                <Text style={styles.transactionItemDifference}>
+                                                                    Difference: Ksh {Math.abs(cartTotal - item.amount).toLocaleString()}
+                                                                </Text>
+                                                            )}
+                                                            <Text style={styles.transactionItemDate}>
+                                                                {new Date(item.timestamp || item.date).toLocaleString()}
+                                                            </Text>
+                                                        </View>
+                                                        {isSelected && (
+                                                            <View style={styles.selectedCheckmark}>
+                                                                <Check size={20} color={isMatchingAmount ? Colors.success : Colors.error} />
+                                                            </View>
+                                                        )}
+                                                    </TouchableOpacity>
+                                                );
+                                            }}
+                                        />
+
+                                        <TouchableOpacity
+                                            style={styles.rescanButton}
+                                            onPress={handleMpesaScan}
+                                        >
+                                            <Text style={styles.rescanButtonText}>Scan Again</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+
+                                {/* Selected Transaction Summary */}
+                                {selectedMpesaTransaction && (
+                                    <View style={[
+                                        styles.selectedTransactionCard,
+                                        isAmountMismatch && styles.selectedTransactionCardMismatch
+                                    ]}>
+                                        <Text style={[
+                                            styles.selectedTransactionTitle,
+                                            isAmountMismatch && styles.selectedTransactionTitleMismatch
+                                        ]}>
+                                            {isAmountMismatch ? '⚠️ Amount Mismatch' : '✓ Transaction Linked'}
+                                        </Text>
+                                        <View style={styles.selectedTransactionRow}>
+                                            <Text style={styles.selectedTransactionLabel}>Cart Total:</Text>
+                                            <Text style={styles.selectedTransactionValue}>
+                                                Ksh {cartTotal.toLocaleString()}
+                                            </Text>
+                                        </View>
+                                        <View style={styles.selectedTransactionRow}>
+                                            <Text style={styles.selectedTransactionLabel}>Transaction:</Text>
+                                            <Text style={[
+                                                styles.selectedTransactionValue,
+                                                isAmountMismatch && styles.selectedTransactionValueMismatch
+                                            ]}>
+                                                Ksh {selectedMpesaTransaction.amount.toLocaleString()}
+                                            </Text>
+                                        </View>
+                                        {isAmountMismatch && (
+                                            <View style={styles.selectedTransactionRow}>
+                                                <Text style={styles.selectedTransactionLabel}>Difference:</Text>
+                                                <Text style={[
+                                                    styles.selectedTransactionValue,
+                                                    styles.selectedTransactionValueMismatch
+                                                ]}>
+                                                    Ksh {Math.abs(cartTotal - selectedMpesaTransaction.amount).toLocaleString()}
+                                                </Text>
+                                            </View>
+                                        )}
+                                        <View style={styles.selectedTransactionRow}>
+                                            <Text style={styles.selectedTransactionLabel}>From:</Text>
+                                            <Text style={styles.selectedTransactionValue}>
+                                                {selectedMpesaTransaction.sender || 'Unknown'}
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={styles.changeTransactionButton}
+                                            onPress={() => setShowTransactionList(true)}
+                                        >
+                                            <Text style={styles.changeTransactionButtonText}>Change Transaction</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                            </View>
+                        )}
 
                         {/* Notes */}
                         <View style={styles.inputGroup}>
@@ -434,11 +746,15 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
                             <Text style={styles.cancelButtonText}>Cancel</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                            style={[styles.button, styles.submitButton]}
+                            style={[
+                                styles.button,
+                                styles.submitButton,
+                                isAmountMismatch && styles.submitButtonWarning
+                            ]}
                             onPress={handleSubmit}
                         >
                             <Text style={styles.submitButtonText}>
-                                Record Sale {cart.length > 0 ? `(${cart.length} items)` : ''}
+                                Record Sale {cart.length > 0 ? `(${cart.length} items)` : ''} {isAmountMismatch ? '⚠️' : ''}
                             </Text>
                         </TouchableOpacity>
                     </View>
@@ -535,7 +851,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        backgroundColor: Colors.primaryLight,
+        backgroundColor: Colors.primary,
         padding: Spacing.sm,
         borderRadius: BorderRadius.md,
         marginBottom: Spacing.md,
@@ -548,7 +864,7 @@ const styles = StyleSheet.create({
     toggleLabel: {
         fontSize: 14,
         fontWeight: '600',
-        color: '#F7F7F7',
+        color: Colors.surface,
     },
     itemsList: {
         maxHeight: 200,
@@ -695,6 +1011,8 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.background,
         borderWidth: 1,
         borderColor: Colors.border,
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     paymentChipActive: {
         backgroundColor: Colors.primary,
@@ -737,6 +1055,216 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '600',
         color: Colors.surface,
+    },
+    scannerHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        marginBottom: Spacing.md,
+    },
+    mpesaScannerContainer: {
+        backgroundColor: '#F0F9FF',
+        borderRadius: 12,
+        padding: Spacing.md,
+        marginTop: Spacing.sm,
+        marginBottom: Spacing.md,
+        borderLeftWidth: 4,
+        borderLeftColor: '#16A34A',
+    },
+    mpesaScannerTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    scanButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#16A34A',
+        paddingVertical: Spacing.md,
+        borderRadius: 10,
+        gap: 8,
+    },
+    scanButtonDisabled: {
+        opacity: 0.7,
+    },
+    scanButtonText: {
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: 14,
+    },
+    transactionListContainer: {
+        marginTop: Spacing.md,
+    },
+    transactionListHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.sm,
+    },
+    transactionListTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    expectedAmountLabel: {
+        fontSize: 12,
+        color: Colors.success,
+        fontWeight: '600',
+        backgroundColor: '#D1FAE5',
+        paddingHorizontal: Spacing.xs,
+        paddingVertical: 2,
+        borderRadius: 4,
+    },
+    transactionItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: BorderRadius.md,
+        padding: Spacing.sm,
+        marginBottom: Spacing.xs,
+    },
+    transactionItemSelected: {
+        backgroundColor: '#D4E7FF',
+        borderColor: Colors.primary,
+    },
+    transactionItemMatching: {
+        borderColor: Colors.success,
+        borderWidth: 2,
+    },
+    transactionItemContent: {
+        flex: 1,
+    },
+    transactionItemHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    transactionItemFrom: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: Colors.text,
+    },
+    matchBadge: {
+        backgroundColor: '#D1FAE5',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 4,
+    },
+    matchBadgeText: {
+        fontSize: 11,
+        color: Colors.success,
+        fontWeight: '600',
+    },
+    transactionItemAmount: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: Colors.success,
+        marginBottom: 2,
+    },
+    transactionItemDate: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+    },
+    selectedCheckmark: {
+        marginLeft: Spacing.sm,
+    },
+    rescanButton: {
+        backgroundColor: Colors.background,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: BorderRadius.md,
+        paddingVertical: Spacing.sm,
+        alignItems: 'center',
+        marginTop: Spacing.sm,
+    },
+    rescanButtonText: {
+        fontSize: 13,
+        color: Colors.primary,
+        fontWeight: '600',
+    },
+    selectedTransactionCard: {
+        backgroundColor: '#fff',
+        borderRadius: 10,
+        padding: Spacing.md,
+        marginTop: Spacing.md,
+        borderWidth: 2,
+        borderColor: Colors.success,
+    },
+    selectedTransactionCardMismatch: {
+        borderColor: Colors.error,
+    },
+    selectedTransactionTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.success,
+        marginBottom: Spacing.sm,
+    },
+    selectedTransactionTitleMismatch: {
+        color: Colors.error,
+    },
+    selectedTransactionRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 6,
+    },
+    selectedTransactionLabel: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+    },
+    selectedTransactionValue: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: Colors.text,
+    },
+    selectedTransactionValueMismatch: {
+        color: Colors.error,
+        fontWeight: '700',
+    },
+    changeTransactionButton: {
+        marginTop: Spacing.sm,
+        paddingVertical: Spacing.xs,
+        paddingHorizontal: Spacing.sm,
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+        alignItems: 'center',
+    },
+    changeTransactionButtonText: {
+        fontSize: 12,
+        color: Colors.primary,
+        fontWeight: '600',
+    },
+    transactionItemMismatch: {
+        backgroundColor: '#FEE2E2',
+        borderColor: Colors.error,
+        borderWidth: 2,
+    },
+    mismatchBadge: {
+        backgroundColor: '#FEE2E2',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 4,
+    },
+    mismatchBadgeText: {
+        fontSize: 11,
+        color: Colors.error,
+        fontWeight: '600',
+    },
+    transactionItemAmountMismatch: {
+        color: Colors.error,
+    },
+    transactionItemDifference: {
+        fontSize: 11,
+        color: Colors.error,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    submitButtonWarning: {
+        backgroundColor: '#F97316',
     },
 });
 

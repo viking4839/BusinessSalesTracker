@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, ScrollView, Platform, Animated } from 'react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
-import { ArrowLeft, Plus, CheckCircle, AlertTriangle, User, X, Search, DollarSign, Clock, Calendar, Phone, FileText } from 'lucide-react-native';
+import { ArrowLeft, Plus, CheckCircle, AlertTriangle, User, X, Search, DollarSign, Clock, Calendar, Phone, FileText, Trash2, Package } from 'lucide-react-native';
 import CreditStorage from '../utils/CreditStorage';
 import InventoryStorage from '../utils/InventoryStorage';
 import NotificationService from '../services/NotificationService';
+import TransactionStorage from '../utils/TransactionStorage';
 
 const CreditManagerScreen = ({ navigation }) => {
     const [credits, setCredits] = useState([]);
@@ -28,6 +29,10 @@ const CreditManagerScreen = ({ navigation }) => {
         notes: ''
     });
 
+    // ADD THESE NEW STATE VARIABLES
+    const [selectedItems, setSelectedItems] = useState([]);
+    const [customers, setCustomers] = useState([]);
+
     const load = async () => {
         const list = await CreditStorage.loadCredits();
         setCredits(list);
@@ -39,10 +44,21 @@ const CreditManagerScreen = ({ navigation }) => {
         setInventory(items);
     };
 
+    // ADD THIS NEW FUNCTION
+    const loadCustomers = () => {
+        const uniqueCustomers = [...new Set(credits.map(c => c.customerName))];
+        setCustomers(uniqueCustomers);
+    };
+
     useEffect(() => {
         load();
         loadInventory();
     }, []);
+
+    // ADD THIS NEW useEffect
+    useEffect(() => {
+        loadCustomers();
+    }, [credits]);
 
     const handleSelectInventory = (item) => {
         setForm(f => ({
@@ -53,34 +69,122 @@ const CreditManagerScreen = ({ navigation }) => {
         }));
     };
 
+    // ADD THESE NEW FUNCTIONS
+    const handleAddItemToList = (item) => {
+        // Check if already added
+        if (selectedItems.find(i => i.inventoryItemId === item.id)) {
+            Alert.alert('Already Added', 'This item is already in the list');
+            return;
+        }
+        setSelectedItems([...selectedItems, {
+            id: `${item.id}-${Date.now()}`,
+            inventoryItemId: item.id,
+            itemName: item.name,
+            quantity: 1,
+            unitPrice: item.unitPrice,
+        }]);
+    };
+
+    const handleRemoveItemFromList = (index) => {
+        setSelectedItems(selectedItems.filter((_, i) => i !== index));
+    };
+
+    const handleUpdateItemQuantity = (index, quantity) => {
+        const updated = [...selectedItems];
+        const qty = parseInt(quantity) || 1;
+        updated[index].quantity = qty;
+        setSelectedItems(updated);
+    };
+
+    const handleUpdateItemPrice = (index, price) => {
+        const updated = [...selectedItems];
+        updated[index].unitPrice = parseFloat(price) || 0;
+        setSelectedItems(updated);
+    };
+
+    const getTotalAmount = () => {
+        return selectedItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+    };
+
     const addCredit = async () => {
-        if (!form.customerName.trim() || !form.itemName.trim()) {
-            Alert.alert('Missing Info', 'Customer name and item are required');
+        if (!form.customerName.trim()) {
+            Alert.alert('Missing Info', 'Customer name is required');
             return;
         }
-        const unit = Number(form.unitPrice);
-        const qty = Number(form.quantity);
-        if (isNaN(unit) || unit <= 0 || isNaN(qty) || qty <= 0) {
-            Alert.alert('Invalid Input', 'Please enter valid quantity and unit price');
-            return;
-        }
-        const credit = await CreditStorage.addCredit({
-            customerName: form.customerName,
-            itemName: form.itemName,
-            inventoryItemId: form.inventoryItemId,
-            quantity: qty,
-            unitPrice: unit,
-            phone: form.phone,
-            notes: form.notes
-        });
-        if (credit.inventoryItemId) {
-            await InventoryStorage.updateItem(credit.inventoryItemId, {
-                quantity: (inventory.find(i => i.id === credit.inventoryItemId)?.quantity || 0) - qty
+
+        // Check if using multi-item or single item
+        if (selectedItems.length > 0) {
+            // Multi-item credit
+            try {
+                for (const item of selectedItems) {
+                    const qty = Number(item.quantity);
+                    const price = Number(item.unitPrice);
+
+                    if (isNaN(qty) || qty <= 0 || isNaN(price) || price <= 0) {
+                        Alert.alert('Invalid Input', `Invalid quantity or price for ${item.itemName}`);
+                        return;
+                    }
+
+                    await CreditStorage.addCredit({
+                        customerName: form.customerName,
+                        itemName: item.itemName,
+                        inventoryItemId: item.inventoryItemId,
+                        quantity: qty,
+                        unitPrice: price,
+                        phone: form.phone,
+                        notes: form.notes
+                    });
+
+                    // Update inventory
+                    if (item.inventoryItemId) {
+                        const invItem = inventory.find(i => i.id === item.inventoryItemId);
+                        if (invItem) {
+                            await InventoryStorage.updateItem(item.inventoryItemId, {
+                                quantity: invItem.quantity - qty
+                            });
+                        }
+                    }
+                }
+
+                Alert.alert('Success', `Added ${selectedItems.length} item(s) on credit for ${form.customerName}`);
+                setShowAdd(false);
+                setForm({ customerName: '', itemName: '', inventoryItemId: null, quantity: '1', unitPrice: '', phone: '', notes: '' });
+                setSelectedItems([]);
+                loadInventory();
+                load();
+            } catch (error) {
+                Alert.alert('Error', 'Failed to add credits');
+            }
+        } else {
+            // Single item credit (original logic)
+            if (!form.itemName.trim()) {
+                Alert.alert('Missing Info', 'Item name is required');
+                return;
+            }
+            const unit = Number(form.unitPrice);
+            const qty = Number(form.quantity);
+            if (isNaN(unit) || unit <= 0 || isNaN(qty) || qty <= 0) {
+                Alert.alert('Invalid Input', 'Please enter valid quantity and unit price');
+                return;
+            }
+            const credit = await CreditStorage.addCredit({
+                customerName: form.customerName,
+                itemName: form.itemName,
+                inventoryItemId: form.inventoryItemId,
+                quantity: qty,
+                unitPrice: unit,
+                phone: form.phone,
+                notes: form.notes
             });
+            if (credit.inventoryItemId) {
+                await InventoryStorage.updateItem(credit.inventoryItemId, {
+                    quantity: (inventory.find(i => i.id === credit.inventoryItemId)?.quantity || 0) - qty
+                });
+            }
+            setShowAdd(false);
+            setForm({ customerName: '', itemName: '', inventoryItemId: null, quantity: '1', unitPrice: '', phone: '', notes: '' });
+            load();
         }
-        setShowAdd(false);
-        setForm({ customerName: '', itemName: '', inventoryItemId: null, quantity: '1', unitPrice: '', phone: '', notes: '' });
-        load();
     };
 
     const getDaysOverdue = (dateCreated) => {
@@ -199,19 +303,99 @@ const CreditManagerScreen = ({ navigation }) => {
     };
 
     const recordPayment = async (amount, note) => {
-        const ok = await CreditStorage.recordPayment(showDetail.id, amount, note);
-        if (ok) {
-            const updated = await CreditStorage.loadCredits();
-            setCredits(updated);
-            setShowDetail(updated.find(c => c.id === showDetail.id));
+        try {
+            // Get the inventory item to calculate profit
+            let wholesalePrice = 0;
+            if (showDetail.inventoryItemId) {
+                const invItem = inventory.find(i => i.id === showDetail.inventoryItemId);
+                if (invItem) {
+                    wholesalePrice = invItem.wholesalePrice || invItem.unitPrice || 0;
+                }
+            }
+
+            // Calculate proportional quantity for partial payment
+            const paymentRatio = amount / showDetail.totalAmount;
+            const proportionalQty = showDetail.quantity * paymentRatio;
+
+            // Record partial payment as transaction with profit data
+            await TransactionStorage.addTransaction({
+                type: 'sale',
+                description: `Credit Payment: ${showDetail.itemName}`,
+                amount: amount,
+                customerName: showDetail.customerName,
+                itemName: showDetail.itemName,
+                quantity: proportionalQty,
+                unitPrice: showDetail.unitPrice,
+                wholesalePrice: wholesalePrice,
+                profit: amount - (wholesalePrice * proportionalQty),
+                linkedInventoryId: showDetail.inventoryItemId,
+                paymentMethod: 'credit_payment',
+                notes: `Partial payment from ${showDetail.customerName}. ${note || ''}`
+            });
+
+            const ok = await CreditStorage.recordPayment(showDetail.id, amount, note);
+            if (ok) {
+                const updated = await CreditStorage.loadCredits();
+                setCredits(updated);
+                setShowDetail(updated.find(c => c.id === showDetail.id));
+                Alert.alert('Success', `Payment of Ksh ${amount.toLocaleString()} recorded`);
+            }
+        } catch (error) {
+            console.error('Error recording payment:', error);
+            const ok = await CreditStorage.recordPayment(showDetail.id, amount, note);
+            if (ok) {
+                const updated = await CreditStorage.loadCredits();
+                setCredits(updated);
+                setShowDetail(updated.find(c => c.id === showDetail.id));
+            }
         }
     };
 
     const clearCredit = async () => {
-        await CreditStorage.clearCredit(showDetail.id, 'Cleared');
-        const updated = await CreditStorage.loadCredits();
-        setCredits(updated);
-        setShowDetail(updated.find(c => c.id === showDetail.id));
+        try {
+            // Get the inventory item to calculate profit
+            let wholesalePrice = 0;
+            if (showDetail.inventoryItemId) {
+                const invItem = inventory.find(i => i.id === showDetail.inventoryItemId);
+                if (invItem) {
+                    wholesalePrice = invItem.wholesalePrice || invItem.unitPrice || 0;
+                }
+            }
+
+            const profit = showDetail.remainingBalance - (wholesalePrice * showDetail.quantity);
+
+            // Record as a sale transaction when credit is cleared with profit data
+            await TransactionStorage.addTransaction({
+                type: 'sale',
+                description: `Credit Cleared: ${showDetail.itemName}`,
+                amount: showDetail.remainingBalance,
+                customerName: showDetail.customerName,
+                itemName: showDetail.itemName,
+                quantity: showDetail.quantity,
+                unitPrice: showDetail.unitPrice,
+                wholesalePrice: wholesalePrice,
+                profit: profit,
+                linkedInventoryId: showDetail.inventoryItemId,
+                paymentMethod: 'credit_cleared',
+                notes: `Credit cleared for ${showDetail.customerName}. Original credit date: ${new Date(showDetail.dateCreated).toLocaleDateString()}`
+            });
+
+            // Mark credit as cleared
+            await CreditStorage.clearCredit(showDetail.id, 'Cleared');
+
+            const updated = await CreditStorage.loadCredits();
+            setCredits(updated);
+            setShowDetail(updated.find(c => c.id === showDetail.id));
+
+            Alert.alert('Success', 'Credit cleared and recorded in transactions');
+        } catch (error) {
+            console.error('Error clearing credit:', error);
+            await CreditStorage.clearCredit(showDetail.id, 'Cleared');
+            const updated = await CreditStorage.loadCredits();
+            setCredits(updated);
+            setShowDetail(updated.find(c => c.id === showDetail.id));
+            Alert.alert('Credit Cleared', 'Credit marked as cleared');
+        }
     };
 
     // Filter credits
@@ -397,6 +581,32 @@ const CreditManagerScreen = ({ navigation }) => {
                                     </View>
                                 </View>
 
+                                {/* Quick Select Previous Customers */}
+                                {customers.length > 0 && (
+                                    <View style={styles.inventorySection}>
+                                        <Text style={styles.inventoryLabel}>Previous customers:</Text>
+                                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                            {customers.map((customer, idx) => (
+                                                <TouchableOpacity
+                                                    key={`customer-${idx}`}
+                                                    style={[
+                                                        styles.inventoryChip,
+                                                        form.customerName === customer && styles.inventoryChipActive
+                                                    ]}
+                                                    onPress={() => setForm(f => ({ ...f, customerName: customer }))}
+                                                >
+                                                    <Text style={[
+                                                        styles.inventoryChipText,
+                                                        form.customerName === customer && styles.inventoryChipTextActive
+                                                    ]}>
+                                                        {customer}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </ScrollView>
+                                    </View>
+                                )}
+
                                 <View style={styles.inputWrapper}>
                                     <Text style={styles.inputLabel}>Phone Number (Optional)</Text>
                                     <View style={styles.inputContainer}>
@@ -413,12 +623,91 @@ const CreditManagerScreen = ({ navigation }) => {
                                 </View>
                             </View>
 
-                            {/* Item Info Section */}
+                            {/* Multi-Item Selection Section */}
                             <View style={styles.formSection}>
-                                <Text style={styles.sectionTitle}>Item Details</Text>
+                                <Text style={styles.sectionTitle}>Add Items from Inventory</Text>
+                                <Text style={styles.inventoryLabel}>Tap items to add (can select multiple):</Text>
+
+                                {inventory.length > 0 ? (
+                                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+                                        {inventory.map((item, idx) => {
+                                            const isAdded = selectedItems.some(i => i.inventoryItemId === item.id);
+                                            return (
+                                                <TouchableOpacity
+                                                    key={`inv-${item.id}-${idx}`}
+                                                    style={[
+                                                        styles.inventoryChip,
+                                                        isAdded && styles.inventoryChipActive
+                                                    ]}
+                                                    onPress={() => handleAddItemToList(item)}
+                                                >
+                                                    <Text style={[
+                                                        styles.inventoryChipText,
+                                                        isAdded && styles.inventoryChipTextActive
+                                                    ]}>
+                                                        {item.name} (Ksh {item.unitPrice})
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </ScrollView>
+                                ) : (
+                                    <Text style={styles.noItemsText}>No inventory items available</Text>
+                                )}
+                            </View>
+
+                            {/* Selected Items List */}
+                            {selectedItems.length > 0 && (
+                                <View style={styles.formSection}>
+                                    <Text style={styles.sectionTitle}>Selected Items ({selectedItems.length})</Text>
+                                    {selectedItems.map((item, index) => (
+                                        <View key={`selected-${item.id}-${index}`} style={styles.selectedItemCard}>
+                                            <View style={styles.selectedItemHeader}>
+                                                <Text style={styles.selectedItemName}>{item.itemName}</Text>
+                                                <TouchableOpacity onPress={() => handleRemoveItemFromList(index)}>
+                                                    <Trash2 size={18} color={Colors.error} />
+                                                </TouchableOpacity>
+                                            </View>
+                                            <View style={styles.selectedItemDetails}>
+                                                <View style={styles.selectedItemRow}>
+                                                    <Text style={styles.selectedItemLabel}>Quantity:</Text>
+                                                    <TextInput
+                                                        style={styles.selectedItemInput}
+                                                        value={String(item.quantity)}
+                                                        onChangeText={(text) => handleUpdateItemQuantity(index, text)}
+                                                        keyboardType="numeric"
+                                                    />
+                                                </View>
+                                                <View style={styles.selectedItemRow}>
+                                                    <Text style={styles.selectedItemLabel}>Unit Price:</Text>
+                                                    <View style={styles.priceInputRow}>
+                                                        <Text style={styles.currencySmall}>Ksh</Text>
+                                                        <TextInput
+                                                            style={styles.selectedItemInput}
+                                                            value={String(item.unitPrice)}
+                                                            onChangeText={(text) => handleUpdateItemPrice(index, text)}
+                                                            keyboardType="numeric"
+                                                        />
+                                                    </View>
+                                                </View>
+                                                <View style={styles.selectedItemRow}>
+                                                    <Text style={styles.selectedItemLabel}>Subtotal:</Text>
+                                                    <Text style={styles.selectedItemTotal}>
+                                                        Ksh {(item.quantity * item.unitPrice).toLocaleString()}
+                                                    </Text>
+                                                </View>
+                                            </View>
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
+
+                            {/* OR Manual Entry Section */}
+                            <View style={styles.formSection}>
+                                <Text style={styles.sectionTitle}>Or Enter Item Manually</Text>
 
                                 <View style={styles.inputWrapper}>
-                                    <Text style={styles.inputLabel}>Item / Product *</Text>
+                                    <Text style={styles.inputLabel}>Item / Product</Text>
                                     <View style={styles.inputContainer}>
                                         <FileText size={18} color={Colors.textSecondary} />
                                         <TextInput
@@ -433,7 +722,7 @@ const CreditManagerScreen = ({ navigation }) => {
 
                                 <View style={styles.rowInputs}>
                                     <View style={[styles.inputWrapper, { flex: 1, marginRight: Spacing.sm }]}>
-                                        <Text style={styles.inputLabel}>Quantity *</Text>
+                                        <Text style={styles.inputLabel}>Quantity</Text>
                                         <View style={styles.inputContainer}>
                                             <TextInput
                                                 style={[styles.textInput, { paddingLeft: Spacing.sm }]}
@@ -447,7 +736,7 @@ const CreditManagerScreen = ({ navigation }) => {
                                     </View>
 
                                     <View style={[styles.inputWrapper, { flex: 1 }]}>
-                                        <Text style={styles.inputLabel}>Unit Price *</Text>
+                                        <Text style={styles.inputLabel}>Unit Price</Text>
                                         <View style={styles.inputContainer}>
                                             <Text style={styles.currencySymbol}>Ksh</Text>
                                             <TextInput
@@ -461,32 +750,6 @@ const CreditManagerScreen = ({ navigation }) => {
                                         </View>
                                     </View>
                                 </View>
-
-                                {/* Quick Select from Inventory */}
-                                {inventory.length > 0 && (
-                                    <View style={styles.inventorySection}>
-                                        <Text style={styles.inventoryLabel}>Or select from inventory:</Text>
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                                            {inventory.map(item => (
-                                                <TouchableOpacity
-                                                    key={item.id}
-                                                    style={[
-                                                        styles.inventoryChip,
-                                                        form.inventoryItemId === item.id && styles.inventoryChipActive
-                                                    ]}
-                                                    onPress={() => handleSelectInventory(item)}
-                                                >
-                                                    <Text style={[
-                                                        styles.inventoryChipText,
-                                                        form.inventoryItemId === item.id && styles.inventoryChipTextActive
-                                                    ]}>
-                                                        {item.name}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </ScrollView>
-                                    </View>
-                                )}
                             </View>
 
                             {/* Notes Section */}
@@ -505,12 +768,22 @@ const CreditManagerScreen = ({ navigation }) => {
                             </View>
 
                             {/* Total Preview */}
-                            {form.quantity && form.unitPrice && !isNaN(Number(form.quantity)) && !isNaN(Number(form.unitPrice)) && (
+                            {(selectedItems.length > 0 || (form.quantity && form.unitPrice)) && (
                                 <View style={styles.totalPreview}>
                                     <Text style={styles.totalPreviewLabel}>Total Credit Amount</Text>
                                     <Text style={styles.totalPreviewValue}>
-                                        Ksh {(Number(form.quantity) * Number(form.unitPrice)).toLocaleString()}
+                                        Ksh {(
+                                            getTotalAmount() +
+                                            (form.itemName && form.quantity && form.unitPrice
+                                                ? Number(form.quantity) * Number(form.unitPrice)
+                                                : 0)
+                                        ).toLocaleString()}
                                     </Text>
+                                    {selectedItems.length > 0 && (
+                                        <Text style={styles.itemCountText}>
+                                            {selectedItems.length} item(s) from inventory
+                                        </Text>
+                                    )}
                                 </View>
                             )}
                         </ScrollView>
@@ -1562,6 +1835,82 @@ const styles = StyleSheet.create({
         ...Shadows.lg,
         elevation: 8,
     },
+    // ADD THESE NEW STYLES
+    selectedItemCard: {
+        backgroundColor: Colors.background,
+        borderRadius: 12,
+        padding: Spacing.md,
+        marginBottom: Spacing.sm,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    selectedItemHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.sm,
+        paddingBottom: Spacing.sm,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.borderLight,
+    },
+    selectedItemName: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: Colors.text,
+        flex: 1,
+    },
+    selectedItemDetails: {
+        gap: Spacing.xs,
+    },
+    selectedItemRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 4,
+    },
+    selectedItemLabel: {
+        fontSize: 13,
+        color: Colors.textSecondary,
+    },
+    selectedItemInput: {
+        width: 80,
+        height: 36,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: 8,
+        paddingHorizontal: Spacing.sm,
+        textAlign: 'center',
+        fontSize: 14,
+        fontWeight: '600',
+        color: Colors.text,
+        backgroundColor: Colors.surface,
+    },
+    priceInputRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    currencySmall: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.textSecondary,
+    },
+    selectedItemTotal: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: Colors.primary,
+    },
+    noItemsText: {
+        fontSize: 13,
+        color: Colors.textSecondary,
+        fontStyle: 'italic',
+        marginTop: Spacing.sm,
+    },
+    itemCountText: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        marginTop: 4,
+    },
 });
 
-export default CreditManagerScreen;
+export default CreditManagerScreen

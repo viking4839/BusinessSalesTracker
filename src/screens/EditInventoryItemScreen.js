@@ -9,8 +9,9 @@ import {
     Alert,
     StatusBar,
     Platform,
+    Modal,
 } from 'react-native';
-import { ArrowLeft, Trash2, Plus, Minus, Calendar, TrendingUp } from 'lucide-react-native';
+import { ArrowLeft, Trash2, Plus, Minus, Calendar, TrendingUp, Check } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import InventoryStorage from '../utils/InventoryStorage';
@@ -24,8 +25,8 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
     const [category, setCategory] = useState(item.category);
     const [quantity, setQuantity] = useState(String(item.quantity));
     const [unitPrice, setUnitPrice] = useState(String(item.unitPrice));
-    const [wholesalePrice, setWholesalePrice] = useState(String(item.wholesalePrice || item.unitPrice)); // NEW
-    const [supplier, setSupplier] = useState(item.supplier || ''); // NEW
+    const [wholesalePrice, setWholesalePrice] = useState(String(item.wholesalePrice || item.unitPrice));
+    const [supplier, setSupplier] = useState(item.supplier || '');
     const [expiryDate, setExpiryDate] = useState(
         item.expiryDate ? new Date(item.expiryDate) : null
     );
@@ -34,6 +35,8 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
     const [lowStockThreshold, setLowStockThreshold] = useState(
         String(item.lowStockThreshold || 5)
     );
+    const [saving, setSaving] = useState(false);
+    const [showSuccessModal, setShowSuccessModal] = useState(false);
 
     React.useEffect(() => {
         loadCategories();
@@ -44,7 +47,6 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
         setCategories(cats);
     };
 
-    // NEW: Profit calculation functions
     const calculateProfitMargin = () => {
         if (!unitPrice || !wholesalePrice) return null;
         const retail = parseFloat(unitPrice);
@@ -61,7 +63,6 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
     };
 
     const handleSave = async () => {
-        // Validation
         if (!name.trim()) {
             Alert.alert('Required', 'Please enter item name');
             return;
@@ -102,81 +103,51 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
 
     const saveItem = async (retail, wholesale) => {
         try {
+            setSaving(true);
             console.log('=== SAVE STARTED ===');
-            console.log('Original item ID:', item.id);
-            console.log('Original item:', item);
 
             const updates = {
                 name: name.trim(),
                 category,
                 quantity: Number(quantity),
                 unitPrice: retail,
-                wholesalePrice: wholesale, // NEW
-                supplier: supplier.trim(), // NEW
+                wholesalePrice: wholesale,
+                supplier: supplier.trim(),
                 expiryDate: expiryDate ? expiryDate.toISOString() : null,
                 lowStockThreshold: Number(lowStockThreshold) || 5,
             };
 
-            console.log('Updates to apply:', updates);
-
-            // Direct approach: Load all items, find, update, save
             const allItemsRaw = await AsyncStorage.getItem('@inventory_items');
-            console.log('Raw storage data:', allItemsRaw);
-
             const allItems = allItemsRaw ? JSON.parse(allItemsRaw) : [];
-            console.log('Parsed items count:', allItems.length);
-            console.log('All item IDs:', allItems.map(i => i.id));
-
             const index = allItems.findIndex(i => i.id === item.id);
-            console.log('Found at index:', index);
 
             if (index === -1) {
                 Alert.alert('Error', 'Item not found in storage');
-                console.error('Item ID not found:', item.id);
+                setSaving(false);
                 return;
             }
 
-            console.log('Original stored item:', allItems[index]);
-
-            // Update the item
             allItems[index] = {
                 ...allItems[index],
                 ...updates,
                 updatedAt: new Date().toISOString(),
             };
 
-            console.log('Updated item:', allItems[index]);
-
-            // Save back to storage
             await AsyncStorage.setItem('@inventory_items', JSON.stringify(allItems));
             console.log('✅ Saved to AsyncStorage');
 
-            // Verify save
-            const verification = await AsyncStorage.getItem('@inventory_items');
-            const verifyItems = JSON.parse(verification);
-            const verifyItem = verifyItems.find(i => i.id === item.id);
-            console.log('Verification - item after save:', verifyItem);
-
-            Alert.alert('✅ Saved', 'Changes saved successfully', [
-                {
-                    text: 'OK',
-                    onPress: () => {
-                        // Pass updated item back
-                        navigation.navigate('Inventory', {
-                            refresh: Date.now(),
-                            updatedItem: allItems[index]
-                        });
-                    }
-                }
-            ]);
-
-            console.log('=== SAVE COMPLETED ===');
+            // Show success and navigate back immediately
+            setShowSuccessModal(true);
+            setTimeout(() => {
+                setShowSuccessModal(false);
+                navigation.goBack();
+            }, 1000);
 
         } catch (error) {
-            console.error('=== SAVE ERROR ===');
-            console.error('Error:', error);
-            console.error('Stack:', error.stack);
+            console.error('=== SAVE ERROR ===', error);
             Alert.alert('Error', 'Failed to save: ' + error.message);
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -192,7 +163,10 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                     onPress: async () => {
                         const success = await InventoryStorage.deleteItem(item.id);
                         if (success) {
-                            navigation.navigate('Inventory', { refresh: Date.now() });
+                            // Navigate back immediately after deletion
+                            navigation.goBack();
+                        } else {
+                            Alert.alert('Error', 'Failed to delete item');
                         }
                     },
                 },
@@ -205,7 +179,6 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
         const newQty = Math.max(0, current + delta);
         setQuantity(String(newQty));
 
-        // Check if low stock after adjustment
         const threshold = Number(lowStockThreshold) || 5;
         if (newQty <= threshold) {
             await NotificationService.notifyLowStock(name, newQty, threshold);
@@ -226,6 +199,22 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
 
+            {/* Success Modal */}
+            <Modal
+                visible={showSuccessModal}
+                transparent
+                animationType="fade"
+            >
+                <View style={styles.successModalOverlay}>
+                    <View style={styles.successModalContent}>
+                        <View style={styles.successIconCircle}>
+                            <Check size={32} color={Colors.success} />
+                        </View>
+                        <Text style={styles.successModalText}>Changes Saved!</Text>
+                    </View>
+                </View>
+            </Modal>
+
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity
@@ -236,8 +225,27 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Edit Item</Text>
                 <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-                    <Trash2 size={20} color={Colors.error} />
+                    <Trash2 size={20} color="#FF6B6B" />
                 </TouchableOpacity>
+            </View>
+
+            {/* Item Preview Card */}
+            <View style={styles.previewCard}>
+                <View style={styles.previewInfo}>
+                    <Text style={styles.previewName} numberOfLines={1}>{name || 'Item Name'}</Text>
+                    <Text style={styles.previewCategory}>{category}</Text>
+                </View>
+                <View style={styles.previewStats}>
+                    <View style={styles.previewStat}>
+                        <Text style={styles.previewStatValue}>{quantity || 0}</Text>
+                        <Text style={styles.previewStatLabel}>Stock</Text>
+                    </View>
+                    <View style={styles.previewStatDivider} />
+                    <View style={styles.previewStat}>
+                        <Text style={styles.previewStatValue}>Ksh {Number(unitPrice || 0).toLocaleString()}</Text>
+                        <Text style={styles.previewStatLabel}>Price</Text>
+                    </View>
+                </View>
             </View>
 
             <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
@@ -253,7 +261,7 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                     />
                 </View>
 
-                {/* NEW: Supplier */}
+                {/* Supplier */}
                 <View style={styles.section}>
                     <Text style={styles.label}>Supplier (Optional)</Text>
                     <TextInput
@@ -319,7 +327,7 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                     </View>
                 </View>
 
-                {/* NEW: Prices Row - Wholesale & Retail */}
+                {/* Prices Row */}
                 <View style={styles.section}>
                     <Text style={styles.label}>Pricing</Text>
                     <View style={styles.pricesRow}>
@@ -348,7 +356,7 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                         </View>
                     </View>
 
-                    {/* NEW: Profit Preview */}
+                    {/* Profit Preview */}
                     {profitMargin !== null && profitPerUnit !== null && (
                         <View style={styles.profitPreview}>
                             <View style={styles.profitRow}>
@@ -416,13 +424,19 @@ const EditInventoryItemScreen = ({ route, navigation }) => {
                     />
                 )}
 
-                <View style={{ height: 100 }} />
+                <View style={{ height: 120 }} />
             </ScrollView>
 
             {/* Save Button */}
             <View style={styles.footer}>
-                <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-                    <Text style={styles.saveButtonText}>Save Changes</Text>
+                <TouchableOpacity
+                    style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+                    onPress={handleSave}
+                    disabled={saving}
+                >
+                    <Text style={styles.saveButtonText}>
+                        {saving ? 'Saving...' : 'Save Changes'}
+                    </Text>
                 </TouchableOpacity>
             </View>
         </View>
@@ -459,7 +473,56 @@ const styles = StyleSheet.create({
         width: 40,
         height: 40,
         justifyContent: 'center',
-        alignItems: 'flex-end',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        borderRadius: 10,
+    },
+    previewCard: {
+        backgroundColor: Colors.surface,
+        marginHorizontal: Spacing.md,
+        marginTop: -Spacing.sm,
+        marginBottom: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+        ...Shadows.md,
+    },
+    previewInfo: {
+        marginBottom: Spacing.sm,
+    },
+    previewName: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    previewCategory: {
+        fontSize: 13,
+        color: Colors.primary,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    previewStats: {
+        flexDirection: 'row',
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+        padding: Spacing.sm,
+    },
+    previewStat: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    previewStatDivider: {
+        width: 1,
+        backgroundColor: Colors.border,
+    },
+    previewStatValue: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    previewStatLabel: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        marginTop: 2,
     },
     scrollView: {
         flex: 1,
@@ -483,7 +546,6 @@ const styles = StyleSheet.create({
         fontSize: 15,
         color: Colors.text,
     },
-    // NEW: Prices row styles
     pricesRow: {
         flexDirection: 'row',
         gap: Spacing.sm,
@@ -505,7 +567,6 @@ const styles = StyleSheet.create({
         fontSize: 15,
         color: Colors.text,
     },
-    // NEW: Profit preview styles
     profitPreview: {
         marginTop: Spacing.sm,
         padding: Spacing.sm,
@@ -610,10 +671,40 @@ const styles = StyleSheet.create({
         borderRadius: BorderRadius.md,
         alignItems: 'center',
     },
+    saveButtonDisabled: {
+        backgroundColor: Colors.textLight,
+    },
     saveButtonText: {
         fontSize: 15,
         fontWeight: '700',
         color: Colors.surface,
+    },
+    successModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    successModalContent: {
+        backgroundColor: Colors.surface,
+        borderRadius: 20,
+        padding: Spacing.xl,
+        alignItems: 'center',
+        ...Shadows.lg,
+    },
+    successIconCircle: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: Colors.success + '20',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+    },
+    successModalText: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
     },
 });
 
