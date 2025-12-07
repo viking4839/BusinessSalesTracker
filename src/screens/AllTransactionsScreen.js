@@ -249,6 +249,78 @@ const AllTransactionsScreen = ({ navigation }) => {
         );
     };
 
+    const renderTransaction = ({ item }) => {
+        const isIncome = item.type === 'sale' || item.type === 'income';
+        const isCredit = item.isCredit || item.paymentMethod === 'credit_cleared' || item.paymentMethod === 'credit_payment';
+        
+        return (
+            <TouchableOpacity 
+                style={styles.transactionCard}
+                onPress={() => setSelectedTransaction(item)}
+                activeOpacity={0.7}
+            >
+                <View style={styles.transactionHeader}>
+                    <View style={styles.transactionInfo}>
+                        {/* Icon */}
+                        <View style={[
+                            styles.transactionIcon,
+                            { backgroundColor: isIncome ? '#D1FAE5' : '#FEE2E2' }
+                        ]}>
+                            {isCredit ? (
+                                <CreditCard size={18} color={isIncome ? Colors.success : Colors.error} />
+                            ) : isIncome ? (
+                                <TrendingUp size={18} color={Colors.success} />
+                            ) : (
+                                <TrendingDown size={18} color={Colors.error} />
+                            )}
+                        </View>
+                        
+                        <View style={styles.transactionDetails}>
+                            <View style={styles.transactionTitleRow}>
+                                <Text style={styles.transactionTitle} numberOfLines={1}>
+                                    {item.description || item.itemName || 'Transaction'}
+                                </Text>
+                                
+                                {/* Credit Badge */}
+                                {isCredit && (
+                                    <View style={styles.creditBadge}>
+                                        <Text style={styles.creditBadgeText}>
+                                            {item.creditType === 'cleared' ? 'Credit Cleared' : 'Credit Payment'}
+                                        </Text>
+                                    </View>
+                                )}
+                            </View>
+                            
+                            {/* Customer Name for Credit */}
+                            {isCredit && item.customerName && (
+                                <View style={styles.customerRow}>
+                                    <User size={12} color={Colors.textSecondary} />
+                                    <Text style={styles.customerName}>{item.customerName}</Text>
+                                </View>
+                            )}
+                            
+                            <Text style={styles.transactionDate}>
+                                {new Date(item.date || item.createdAt).toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                })}
+                            </Text>
+                        </View>
+                    </View>
+                    
+                    <Text style={[
+                        styles.transactionAmount,
+                        { color: isIncome ? Colors.success : Colors.error }
+                    ]}>
+                        {isIncome ? '+' : '-'}Ksh {Math.abs(item.amount).toLocaleString()}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+        );
+    };
+
     const filtered = filterTransactions();
     const sections = groupByDate(filtered);
     const totals = getTotals(filtered);
@@ -848,6 +920,36 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '600',
         color: Colors.surface
+    },
+    creditBadge: {
+        backgroundColor: '#EFF6FF',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 6,
+        marginLeft: 8,
+        borderWidth: 1,
+        borderColor: '#BFDBFE',
+    },
+    creditBadgeText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#2563EB',
+    },
+    customerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: 2,
+    },
+    customerName: {
+        fontSize: 12,
+        color: Colors.primary,
+        fontWeight: '600',
+    },
+    transactionTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
     },
 });
 

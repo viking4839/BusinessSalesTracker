@@ -48,29 +48,78 @@ async function debugDump() {
 }
 
 async function updateTransaction(transactionId, updates) {
-  try {
-    const transactions = await loadTransactions();
-    const index = transactions.findIndex(t => t.id === transactionId);
-    
-    if (index === -1) {
-      console.error('Transaction not found:', transactionId);
-      return false;
+    try {
+        const transactions = await loadTransactions();
+        const index = transactions.findIndex(t => t.id === transactionId);
+
+        if (index === -1) {
+            console.error('Transaction not found:', transactionId);
+            return false;
+        }
+
+        // Update the transaction
+        transactions[index] = {
+            ...transactions[index],
+            ...updates,
+            updatedAt: new Date().toISOString()
+        };
+
+        await saveTransactions(transactions);
+        console.log('✅ Transaction updated:', transactionId);
+        return true;
+    } catch (error) {
+        console.error('updateTransaction error:', error);
+        return false;
     }
-    
-    // Update the transaction
-    transactions[index] = {
-      ...transactions[index],
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-    
-    await saveTransactions(transactions);
-    console.log('✅ Transaction updated:', transactionId);
-    return true;
-  } catch (error) {
-    console.error('updateTransaction error:', error);
-    return false;
-  }
+}
+
+async function addTransaction(transactionData) {
+    try {
+        const transactions = await loadTransactions();
+
+        // Calculate profit if wholesalePrice is provided
+        let profit = 0;
+        let wholesalePrice = transactionData.wholesalePrice || 0;
+
+        if (transactionData.amount && wholesalePrice) {
+            // For credit payments, profit = amount - (wholesalePrice * quantity)
+            const quantity = transactionData.quantity || 1;
+            const costBasis = wholesalePrice * quantity;
+            profit = transactionData.amount - costBasis;
+        } else if (transactionData.profit) {
+            profit = transactionData.profit;
+        }
+
+        const newTransaction = {
+            id: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: transactionData.type || 'sale',
+            description: transactionData.description || '',
+            amount: transactionData.amount || 0,
+            customerName: transactionData.customerName || '',
+            itemName: transactionData.itemName || '',
+            quantity: transactionData.quantity || 1,
+            unitPrice: transactionData.unitPrice || 0,
+            wholesalePrice: wholesalePrice,
+            profit: profit,
+            linkedInventoryId: transactionData.linkedInventoryId || null,
+            paymentMethod: transactionData.paymentMethod || 'cash',
+            notes: transactionData.notes || '',
+            isCredit: transactionData.paymentMethod === 'credit_cleared' || transactionData.paymentMethod === 'credit_payment',
+            creditType: transactionData.paymentMethod === 'credit_cleared' ? 'cleared' :
+                transactionData.paymentMethod === 'credit_payment' ? 'payment' : null,
+            createdAt: new Date().toISOString(),
+            date: new Date().toISOString(),
+        };
+
+        transactions.unshift(newTransaction);
+        await saveTransactions(transactions);
+
+        console.log('✅ Transaction added:', newTransaction.id, 'Profit:', profit);
+        return newTransaction;
+    } catch (error) {
+        console.error('addTransaction error:', error);
+        return null;
+    }
 }
 
 export default {
@@ -78,6 +127,7 @@ export default {
     saveTransactions,
     clearTransactions,
     debugDump,
-    updateTransaction
+    updateTransaction,
+    addTransaction
 
 };
