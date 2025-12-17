@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert,
     Modal, TextInput, Pressable
@@ -8,7 +8,7 @@ import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Th
 import {
     ArrowDownLeft, ArrowUpRight, Calendar, Clock, Building2,
     User, MessageSquare, Hash, TrendingUp, Tag, ArrowLeft, Package,
-    CheckCircle, XCircle, Plus, Minus, Trash2
+    CheckCircle, XCircle, Plus, Minus, Trash2, Search, X
 } from 'lucide-react-native';
 import Button from '../components/Button';
 import InventoryStorage from '../utils/InventoryStorage';
@@ -22,7 +22,21 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
     const [localTransaction, setLocalTransaction] = useState(transaction);
     const [showMultiItemModal, setShowMultiItemModal] = useState(false);
     const [selectedItems, setSelectedItems] = useState([]);
+    const [showCartModal, setShowCartModal] = useState(false);
+    const [cartItems, setCartItems] = useState([]);
+    const [inventory, setInventory] = useState([]);
+    const [searchInventory, setSearchInventory] = useState('');
     const isIncoming = Number(localTransaction.amount) > 0;
+
+    // Load inventory when component mounts
+    useEffect(() => {
+        loadInventory();
+    }, []);
+
+    const loadInventory = async () => {
+        const items = await InventoryStorage.loadInventory();
+        setInventory(items.filter(item => item.quantity > 0)); // Only show items in stock
+    };
 
     // Handle confirming a single match
     const handleConfirmMatch = async (matchItem, quantity) => {
@@ -60,6 +74,16 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
 
             setLocalTransaction(updated);
 
+            const allTransactions = await TransactionStorage.loadTransactions();
+            const idx = allTransactions.findIndex(t => t.id === updated.id);
+            if (idx !== -1) {
+                allTransactions[idx] = updated;
+                await TransactionStorage.saveTransactions(allTransactions);
+            }
+
+            // Regenerate profit report
+            await ProfitReportStorage.refreshTodaysReport();
+
             DeviceEventEmitter.emit('profitReportUpdated');
             DeviceEventEmitter.emit('transactions:updated');
 
@@ -78,11 +102,10 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         }
     };
 
-    // NEW: Handle multiple item selection modal
+    // Handle multiple item selection modal
     const handleOpenMultiItemModal = () => {
         const match = localTransaction.inventoryMatch;
         if (match && match.matchType === 'multiple') {
-            // Pre-populate with suggested quantities
             const preSelected = match.matches.map(m => ({
                 item: m.item,
                 quantity: m.suggestedQuantity || 1
@@ -92,7 +115,7 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         }
     };
 
-    // NEW: Update quantity for a selected item
+    // Update quantity for a selected item
     const updateItemQuantity = (itemId, change) => {
         setSelectedItems(prev =>
             prev.map(si => {
@@ -105,12 +128,12 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         );
     };
 
-    // NEW: Remove item from selection
+    // Remove item from selection
     const removeItem = (itemId) => {
         setSelectedItems(prev => prev.filter(si => si.item.id !== itemId));
     };
 
-    // NEW: Confirm multiple items
+    // Confirm multiple items
     const handleConfirmMultipleItems = async () => {
         try {
             const validItems = selectedItems.filter(si => si.quantity > 0);
@@ -120,16 +143,14 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                 return;
             }
 
-            // Calculate total value
             const totalValue = validItems.reduce((sum, si) =>
                 sum + (si.item.unitPrice * si.quantity), 0
             );
 
-            // Verify total matches transaction amount
             const transactionAmount = Math.abs(Number(localTransaction.amount));
             const difference = Math.abs(totalValue - transactionAmount);
 
-            if (difference > 1) { // Allow 1 Ksh difference for rounding
+            if (difference > 1) {
                 Alert.alert(
                     'Amount Mismatch',
                     `Selected items total: Ksh ${totalValue.toLocaleString()}\n` +
@@ -151,25 +172,23 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         }
     };
 
-    // NEW: Actually link multiple items
+    // Actually link multiple items
     const confirmMultipleItemsLink = async (validItems) => {
         try {
-            // Deduct stock for each item
-            const inventory = await InventoryStorage.loadInventory();
+            const inventoryData = await InventoryStorage.loadInventory();
 
             for (const si of validItems) {
-                const itemIndex = inventory.findIndex(item => item.id === si.item.id);
+                const itemIndex = inventoryData.findIndex(item => item.id === si.item.id);
                 if (itemIndex !== -1) {
-                    if (inventory[itemIndex].quantity < si.quantity) {
+                    if (inventoryData[itemIndex].quantity < si.quantity) {
                         throw new Error(`Insufficient stock for ${si.item.name}`);
                     }
-                    inventory[itemIndex].quantity -= si.quantity;
+                    inventoryData[itemIndex].quantity -= si.quantity;
                 }
             }
 
-            await InventoryStorage.saveInventory(inventory);
+            await InventoryStorage.saveInventory(inventoryData);
 
-            // Update transaction
             const updated = {
                 ...localTransaction,
                 inventoryMatch: {
@@ -189,7 +208,6 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                 }))
             };
 
-            // Save transaction
             const allTransactions = await TransactionStorage.loadTransactions();
             const txIndex = allTransactions.findIndex(t => t.id === localTransaction.id);
             if (txIndex !== -1) {
@@ -197,11 +215,8 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                 await TransactionStorage.saveTransactions(allTransactions);
             }
 
-            // Update profit report
-            await ProfitReportStorage.addSale({
-                ...updated,
-                timestamp: updated.timestamp || updated.date
-            });
+            // Regenerate profit report with linked items
+            await ProfitReportStorage.refreshTodaysReport();
 
             setLocalTransaction(updated);
             setShowMultiItemModal(false);
@@ -251,6 +266,144 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         }
     };
 
+    // === CART FEATURE FUNCTIONS ===
+
+    // Add item to cart
+    const addToCart = (inventoryItem) => {
+        const existingIndex = cartItems.findIndex(ci => ci.id === inventoryItem.id);
+
+        if (existingIndex !== -1) {
+            const updated = [...cartItems];
+            updated[existingIndex].quantity += 1;
+            setCartItems(updated);
+        } else {
+            setCartItems([...cartItems, {
+                id: inventoryItem.id,
+                name: inventoryItem.name,
+                unitPrice: inventoryItem.unitPrice,
+                wholesalePrice: inventoryItem.wholesalePrice || inventoryItem.unitPrice,
+                availableStock: inventoryItem.quantity,
+                quantity: 1
+            }]);
+        }
+    };
+
+    // Update cart item quantity
+    const updateCartItemQuantity = (itemId, newQuantity) => {
+        if (newQuantity <= 0) {
+            removeFromCart(itemId);
+            return;
+        }
+
+        const updated = cartItems.map(ci => {
+            if (ci.id === itemId) {
+                return { ...ci, quantity: Math.min(newQuantity, ci.availableStock) };
+            }
+            return ci;
+        });
+        setCartItems(updated);
+    };
+
+    // Remove item from cart
+    const removeFromCart = (itemId) => {
+        setCartItems(cartItems.filter(ci => ci.id !== itemId));
+    };
+
+    // Calculate cart totals
+    const getCartTotal = () => {
+        return cartItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+    };
+
+    // Check if cart total matches transaction amount
+    const cartMatchesTransaction = () => {
+        const cartTotal = getCartTotal();
+        const transactionAmount = Math.abs(Number(localTransaction.amount));
+        const difference = Math.abs(cartTotal - transactionAmount);
+        return difference <= 1;
+    };
+
+    // Link cart items to transaction
+    const handleLinkCart = async () => {
+        try {
+            const cartTotal = getCartTotal();
+            const transactionAmount = Math.abs(Number(localTransaction.amount));
+            const difference = Math.abs(cartTotal - transactionAmount);
+
+            if (difference > 1) {
+                Alert.alert(
+                    'Amount Mismatch',
+                    `Cart total: Ksh ${cartTotal.toLocaleString()}\n` +
+                    `Transaction amount: Ksh ${transactionAmount.toLocaleString()}\n` +
+                    `Difference: Ksh ${difference.toLocaleString()}\n\n` +
+                    `Please adjust quantities to match the transaction amount.`,
+                    [{ text: 'OK' }]
+                );
+                return;
+            }
+
+            if (cartItems.length === 0) {
+                Alert.alert('Empty Cart', 'Please add items to the cart first');
+                return;
+            }
+
+            const inventoryData = await InventoryStorage.loadInventory();
+
+            for (const cartItem of cartItems) {
+                const itemIndex = inventoryData.findIndex(item => item.id === cartItem.id);
+                if (itemIndex !== -1) {
+                    if (inventoryData[itemIndex].quantity < cartItem.quantity) {
+                        throw new Error(`Insufficient stock for ${cartItem.name}`);
+                    }
+                    inventoryData[itemIndex].quantity -= cartItem.quantity;
+                }
+            }
+
+            await InventoryStorage.saveInventory(inventoryData);
+
+            const updated = {
+                ...localTransaction,
+                isMultiItem: true,
+                stockDeducted: true,
+                cartLinked: true,
+                items: cartItems.map(ci => ({
+                    id: ci.id,
+                    name: ci.name,
+                    quantity: ci.quantity,
+                    unitPrice: ci.unitPrice,
+                    wholesalePrice: ci.wholesalePrice,
+                    total: ci.unitPrice * ci.quantity
+                }))
+            };
+
+            const allTransactions = await TransactionStorage.loadTransactions();
+            const txIndex = allTransactions.findIndex(t => t.id === localTransaction.id);
+            if (txIndex !== -1) {
+                allTransactions[txIndex] = updated;
+                await TransactionStorage.saveTransactions(allTransactions);
+            }
+
+            // Regenerate profit report with new cart-linked transaction
+            await ProfitReportStorage.refreshTodaysReport();
+
+            setLocalTransaction(updated);
+            setShowCartModal(false);
+            setCartItems([]);
+
+            DeviceEventEmitter.emit('profitReportUpdated');
+            DeviceEventEmitter.emit('transactions:updated');
+
+            Alert.alert(
+                '✅ Cart Linked Successfully',
+                `Linked ${cartItems.length} items to this transaction\nTotal: Ksh ${cartTotal.toLocaleString()}\n\nInventory and profit report updated!`,
+                [{ text: 'Great!', onPress: () => navigation.navigate('Transactions', { screen: 'AllTransactionsMain' }) }]
+            );
+
+        } catch (error) {
+            console.error('handleLinkCart error:', error);
+            Alert.alert('Error', error.message || 'Failed to link cart items');
+        }
+    };
+
     // Render single match suggestion
     const renderSingleMatchSuggestion = () => {
         const match = localTransaction.inventoryMatch;
@@ -292,7 +445,7 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         );
     };
 
-    // NEW: Render multiple match suggestion with option to select multiple items
+    // Render multiple match suggestion
     const renderMultipleMatchSuggestion = () => {
         const match = localTransaction.inventoryMatch;
         if (!match || match.matchType !== 'multiple') return null;
@@ -339,6 +492,31 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     >
                         <Plus size={16} color={Colors.surface} />
                         <Text style={styles.confirmText}>Link Multiple Items</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        );
+    };
+
+    // Render cart option button
+    const renderCartOption = () => {
+        if (localTransaction.linkedInventoryId || localTransaction.items || !isIncoming) return null;
+
+        return (
+            <View style={[styles.section, styles.cartOptionCard]}>
+                <View style={styles.cartOptionHeader}>
+                    <View>
+                        <Text style={styles.cartOptionTitle}>Multiple Items Purchase?</Text>
+                        <Text style={styles.cartOptionSubtitle}>
+                            Add cart items to match the transaction amount
+                        </Text>
+                    </View>
+                    <TouchableOpacity
+                        style={styles.cartButton}
+                        onPress={() => setShowCartModal(true)}
+                    >
+                        <Package size={18} color={Colors.surface} />
+                        <Text style={styles.cartButtonText}>Add Cart</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -406,6 +584,187 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
         );
     };
 
+    // Render Cart Modal
+    const renderCartModal = () => {
+        const filteredInventory = searchInventory
+            ? inventory.filter(item =>
+                item.name.toLowerCase().includes(searchInventory.toLowerCase())
+            )
+            : inventory;
+
+        const cartTotal = getCartTotal();
+        const transactionAmount = Math.abs(Number(localTransaction.amount));
+        const remaining = transactionAmount - cartTotal;
+        const isMatch = cartMatchesTransaction();
+
+        return (
+            <Modal
+                visible={showCartModal}
+                animationType="slide"
+                transparent={false}
+                onRequestClose={() => setShowCartModal(false)}
+            >
+                <View style={styles.cartModalContainer}>
+                    {/* Header */}
+                    <View style={styles.cartModalHeader}>
+                        <View>
+                            <Text style={styles.cartModalTitle}>Build Transaction Cart</Text>
+                            <Text style={styles.cartModalSubtitle}>
+                                Transaction: Ksh {transactionAmount.toLocaleString()}
+                            </Text>
+                        </View>
+                        <TouchableOpacity onPress={() => setShowCartModal(false)}>
+                            <X size={24} color={Colors.text} />
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* Cart Summary Bar */}
+                    <View style={[styles.cartSummaryBar, isMatch && styles.cartSummaryBarMatch]}>
+                        <View style={styles.cartSummaryLeft}>
+                            <Text style={styles.cartSummaryLabel}>Cart Total:</Text>
+                            <Text style={[styles.cartSummaryValue, isMatch && { color: Colors.success }]}>
+                                Ksh {cartTotal.toLocaleString()}
+                            </Text>
+                        </View>
+                        <View style={styles.cartSummaryRight}>
+                            <Text style={styles.cartSummaryLabel}>
+                                {remaining >= 0 ? 'Remaining:' : 'Over by:'}
+                            </Text>
+                            <Text style={[
+                                styles.cartSummaryValue,
+                                { color: remaining >= 0 ? '#F59E0B' : Colors.error }
+                            ]}>
+                                Ksh {Math.abs(remaining).toLocaleString()}
+                            </Text>
+                        </View>
+                    </View>
+
+                    {/* Current Cart Items */}
+                    {cartItems.length > 0 && (
+                        <View style={styles.cartItemsSection}>
+                            <Text style={styles.cartSectionTitle}>
+                                Cart ({cartItems.length} {cartItems.length === 1 ? 'item' : 'items'})
+                            </Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                                {cartItems.map((item, idx) => (
+                                    <View key={idx} style={styles.cartItemChip}>
+                                        <View style={styles.cartItemChipContent}>
+                                            <Text style={styles.cartItemChipName} numberOfLines={1}>
+                                                {item.name}
+                                            </Text>
+                                            <Text style={styles.cartItemChipQty}>
+                                                {item.quantity} × {item.unitPrice}
+                                            </Text>
+                                        </View>
+                                        <View style={styles.cartItemChipActions}>
+                                            <TouchableOpacity
+                                                style={styles.cartItemChipBtn}
+                                                onPress={() => updateCartItemQuantity(item.id, item.quantity - 1)}
+                                            >
+                                                <Minus size={12} color={Colors.text} />
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                style={styles.cartItemChipBtn}
+                                                onPress={() => updateCartItemQuantity(item.id, item.quantity + 1)}
+                                            >
+                                                <Plus size={12} color={Colors.text} />
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                style={styles.cartItemChipRemove}
+                                                onPress={() => removeFromCart(item.id)}
+                                            >
+                                                <Trash2 size={12} color={Colors.error} />
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+                                ))}
+                            </ScrollView>
+                        </View>
+                    )}
+
+                    {/* Search Inventory */}
+                    <View style={styles.cartSearchSection}>
+                        <Text style={styles.cartSectionTitle}>Add Items from Inventory</Text>
+                        <View style={styles.cartSearchBar}>
+                            <Search size={18} color={Colors.textSecondary} />
+                            <TextInput
+                                style={styles.cartSearchInput}
+                                placeholder="Search inventory..."
+                                value={searchInventory}
+                                onChangeText={setSearchInventory}
+                                placeholderTextColor={Colors.textLight}
+                            />
+                            {searchInventory.length > 0 && (
+                                <TouchableOpacity onPress={() => setSearchInventory('')}>
+                                    <X size={18} color={Colors.textSecondary} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+
+                    {/* Inventory List */}
+                    <ScrollView style={styles.cartInventoryList}>
+                        {filteredInventory.length === 0 ? (
+                            <View style={styles.cartEmptyState}>
+                                <Package size={40} color={Colors.textLight} />
+                                <Text style={styles.cartEmptyText}>
+                                    {searchInventory ? 'No items found' : 'No inventory items available'}
+                                </Text>
+                            </View>
+                        ) : (
+                            filteredInventory.map((item, idx) => {
+                                const inCart = cartItems.find(ci => ci.id === item.id);
+                                return (
+                                    <TouchableOpacity
+                                        key={idx}
+                                        style={[styles.cartInventoryItem, inCart && styles.cartInventoryItemInCart]}
+                                        onPress={() => addToCart(item)}
+                                    >
+                                        <View style={styles.cartInventoryItemLeft}>
+                                            <Text style={styles.cartInventoryItemName}>{item.name}</Text>
+                                            <Text style={styles.cartInventoryItemDetails}>
+                                                Ksh {item.unitPrice.toLocaleString()} • {item.quantity} in stock
+                                            </Text>
+                                        </View>
+                                        {inCart ? (
+                                            <View style={styles.cartInventoryBadge}>
+                                                <Text style={styles.cartInventoryBadgeText}>
+                                                    {inCart.quantity} in cart
+                                                </Text>
+                                            </View>
+                                        ) : (
+                                            <Plus size={20} color={Colors.primary} />
+                                        )}
+                                    </TouchableOpacity>
+                                );
+                            })
+                        )}
+                    </ScrollView>
+
+                    {/* Link Cart Button */}
+                    <View style={styles.cartModalFooter}>
+                        <TouchableOpacity
+                            style={styles.cartCancelBtn}
+                            onPress={() => setShowCartModal(false)}
+                        >
+                            <Text style={styles.cartCancelText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.cartLinkBtn, !isMatch && styles.cartLinkBtnDisabled]}
+                            onPress={handleLinkCart}
+                            disabled={!isMatch}
+                        >
+                            <CheckCircle size={18} color={Colors.surface} />
+                            <Text style={styles.cartLinkText}>
+                                Link Cart ({cartItems.length})
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+        );
+    };
+
     const handleDelete = () => {
         Alert.alert(
             'Delete Transaction',
@@ -417,10 +776,7 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            const allTransactions = await TransactionStorage.loadTransactions();
-                            const updated = allTransactions.filter(t => t.id !== localTransaction.id);
-                            await TransactionStorage.saveTransactions(updated);
-
+                            await TransactionStorage.deleteTransaction(localTransaction.id);
                             DeviceEventEmitter.emit('transactions:updated');
 
                             Alert.alert('Deleted', 'Transaction removed', [
@@ -484,6 +840,9 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
             {/* Match Suggestions */}
             {renderSingleMatchSuggestion()}
             {renderMultipleMatchSuggestion()}
+
+            {/* Cart Option */}
+            {renderCartOption()}
 
             {/* Linked Inventory */}
             {renderLinkedInventory()}
@@ -561,7 +920,7 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
 
             <View style={{ height: 40 }} />
 
-            {/* NEW: Multi-Item Selection Modal */}
+            {/* Multi-Item Selection Modal */}
             <Modal
                 visible={showMultiItemModal}
                 transparent
@@ -645,10 +1004,12 @@ const TransactionDetailsScreen = ({ route, navigation }) => {
                     </Pressable>
                 </Pressable>
             </Modal>
+
+            {/* Cart Modal */}
+            {renderCartModal()}
         </ScrollView>
     );
 };
-
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.background },
     headerRow: {
@@ -702,7 +1063,6 @@ const styles = StyleSheet.create({
     detailValue: { ...Typography.body, color: Colors.text, fontWeight: '600', textAlign: 'right', flex: 1 },
     messageContainer: { flexDirection: 'row', alignItems: 'flex-start' },
     messageText: { ...Typography.body, color: Colors.text, flex: 1, lineHeight: 20 },
-
     // Match suggestion styles
     suggestionCard: {
         backgroundColor: '#fefce8',
@@ -1004,6 +1364,267 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: Colors.surface,
     },
-});
 
+    // Cart Option Card
+    cartOptionCard: {
+        backgroundColor: '#F0F9FF',
+        borderRadius: BorderRadius.lg,
+        borderLeftWidth: 4,
+        borderLeftColor: Colors.primary,
+    },
+    cartOptionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    cartOptionTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 4,
+    },
+    cartOptionSubtitle: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+    },
+    cartButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: Colors.primary,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
+        borderRadius: BorderRadius.md,
+    },
+    cartButtonText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: Colors.surface,
+    },
+
+    // Cart Modal
+    cartModalContainer: {
+        flex: 1,
+        backgroundColor: Colors.background,
+    },
+    cartModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: Spacing.md,
+        backgroundColor: Colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    cartModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    cartModalSubtitle: {
+        fontSize: 13,
+        color: Colors.textSecondary,
+        marginTop: 2,
+    },
+    cartSummaryBar: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        padding: Spacing.md,
+        backgroundColor: '#FEF3C7',
+        borderBottomWidth: 2,
+        borderBottomColor: '#FCD34D',
+    },
+    cartSummaryBarMatch: {
+        backgroundColor: '#D1FAE5',
+        borderBottomColor: Colors.success,
+    },
+    cartSummaryLeft: {
+        flex: 1,
+    },
+    cartSummaryRight: {
+        flex: 1,
+        alignItems: 'flex-end',
+    },
+    cartSummaryLabel: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        marginBottom: 2,
+    },
+    cartSummaryValue: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: Colors.text,
+    },
+    cartItemsSection: {
+        padding: Spacing.md,
+        backgroundColor: Colors.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    cartSectionTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: Spacing.sm,
+    },
+    cartItemChip: {
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+        padding: Spacing.sm,
+        marginRight: Spacing.xs,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        minWidth: 140,
+    },
+    cartItemChipContent: {
+        marginBottom: Spacing.xs,
+    },
+    cartItemChipName: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 2,
+    },
+    cartItemChipQty: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+    },
+    cartItemChipActions: {
+        flexDirection: 'row',
+        gap: 4,
+    },
+    cartItemChipBtn: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    cartItemChipRemove: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: '#FEE2E2',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    cartSearchSection: {
+        padding: Spacing.md,
+        backgroundColor: Colors.surface,
+    },
+    cartSearchBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+        borderRadius: BorderRadius.md,
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: Spacing.xs,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        gap: Spacing.xs,
+    },
+    cartSearchInput: {
+        flex: 1,
+        fontSize: 14,
+        color: Colors.text,
+        padding: 0,
+    },
+    cartInventoryList: {
+        flex: 1,
+        padding: Spacing.md,
+    },
+    cartInventoryItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: Colors.surface,
+        padding: Spacing.md,
+        borderRadius: BorderRadius.md,
+        marginBottom: Spacing.xs,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
+    cartInventoryItemInCart: {
+        backgroundColor: '#EFF6FF',
+        borderColor: Colors.primary,
+    },
+    cartInventoryItemLeft: {
+        flex: 1,
+        marginRight: Spacing.sm,
+    },
+    cartInventoryItemName: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: 2,
+    },
+    cartInventoryItemDetails: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+    },
+    cartInventoryBadge: {
+        backgroundColor: Colors.primary,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 12,
+    },
+    cartInventoryBadgeText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: Colors.surface,
+    },
+    cartEmptyState: {
+        alignItems: 'center',
+        paddingVertical: Spacing.xxl,
+    },
+    cartEmptyText: {
+        fontSize: 14,
+        color: Colors.textSecondary,
+        marginTop: Spacing.sm,
+    },
+    cartModalFooter: {
+        flexDirection: 'row',
+        padding: Spacing.md,
+        gap: Spacing.sm,
+        backgroundColor: Colors.surface,
+        borderTopWidth: 1,
+        borderTopColor: Colors.border,
+    },
+    cartCancelBtn: {
+        flex: 1,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.md,
+        backgroundColor: Colors.background,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        alignItems: 'center',
+    },
+    cartCancelText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.text,
+    },
+    cartLinkBtn: {
+        flex: 2,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.md,
+        backgroundColor: Colors.primary,
+    },
+    cartLinkBtnDisabled: {
+        backgroundColor: Colors.border,
+        opacity: 0.5,
+    },
+    cartLinkText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: Colors.surface,
+    },
+});
 export default TransactionDetailsScreen;

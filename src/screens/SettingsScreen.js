@@ -7,7 +7,7 @@ import { Colors, Typography, Spacing, BorderRadius } from '../styles/Theme';
 import Card from '../components/Card';
 import {
   ArrowLeft, Bell, Building2, Wallet, Clock, Lock,
-  Trash2, Info, BookOpen, HelpCircle, Shield
+  Trash2, Info, BookOpen, HelpCircle, Shield, Zap
 } from 'lucide-react-native';
 import TransactionStorage from '../utils/TransactionStorage';
 import ProfitReportStorage from '../utils/ProfitReportStorage';
@@ -20,6 +20,7 @@ const SettingsScreen = ({ navigation }) => {
   const [showAbout, setShowAbout] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showRateApp, setShowRateApp] = useState(false);
+  const [smsScanEnabled, setSmsScanEnabled] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -28,6 +29,7 @@ const SettingsScreen = ({ navigation }) => {
         if (s) {
           const parsed = JSON.parse(s);
           setNotifications(!!parsed.notifications);
+          setSmsScanEnabled(parsed.smsScanEnabled !== false); // default to true
         }
         const p = await AsyncStorage.getItem('profile');
         if (p) {
@@ -45,10 +47,18 @@ const SettingsScreen = ({ navigation }) => {
     try {
       const payload = {
         notifications: next?.notifications ?? notifications,
+        smsScanEnabled: next?.smsScanEnabled ?? smsScanEnabled,
       };
+
       await AsyncStorage.setItem('settings', JSON.stringify(payload));
-    } catch { }
+
+      // 🔔 Notify other screens (HomeScreen)
+      DeviceEventEmitter.emit('settings:updated', payload);
+    } catch (e) {
+      console.error('Failed to save settings', e);
+    }
   };
+
 
   const handleClearData = async () => {
     Alert.alert(
@@ -99,12 +109,13 @@ const SettingsScreen = ({ navigation }) => {
       </View>
       <Switch
         value={value}
-        onValueChange={(v) => { onValueChange(v); saveSettings({ notifications: v }); }}
+        onValueChange={onValueChange}
         trackColor={{ false: '#d1d5db', true: Colors.primary + '60' }}
         thumbColor={value ? Colors.primary : '#f3f4f6'}
       />
     </View>
   );
+
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -155,6 +166,17 @@ const SettingsScreen = ({ navigation }) => {
             title="Alert Settings"
             subtitle="Low stock, expiry, and credit alerts"
             onPress={() => navigation.navigate('NotificationSettings')}
+          />
+
+          <SettingToggle
+            Icon={Zap} // Add Zap to imports if not already there
+            title="SMS Scanning"
+            subtitle="Auto-detect transactions from SMS"
+            value={smsScanEnabled}
+            onValueChange={(v) => {
+              setSmsScanEnabled(v);
+              saveSettings({ smsScanEnabled: v });
+            }}
           />
 
           <SettingItem

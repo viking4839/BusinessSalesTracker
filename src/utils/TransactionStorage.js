@@ -122,12 +122,25 @@ async function addTransaction(transactionData) {
     }
 }
 
+async function deleteTransaction(transactionId) {
+    try {
+        const transactions = await loadTransactions();
+        const updatedTransactions = transactions.filter(t => t.id !== transactionId);
+        await saveTransactions(updatedTransactions);
+        console.log('✅ Transaction deleted:', transactionId);
+        return true;
+    } catch (error) {
+        console.error('deleteTransaction error:', error);
+        return false;
+    }
+}
+
 export default {
     loadTransactions,
     saveTransactions,
     clearTransactions,
     debugDump,
     updateTransaction,
-    addTransaction
-
+    addTransaction,
+    deleteTransaction
 };

@@ -40,6 +40,8 @@ import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../styles/Th
 import BankCard from '../components/BankCard';
 import AddCashSaleDialog from '../components/AddCashSaleDialog';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 
 const { width } = Dimensions.get('window');
 
@@ -69,12 +71,14 @@ const HomeScreen = ({ navigation, route }) => {
     bestSeller: null
   });
   const [todayMoneyOut, setTodayMoneyOut] = useState(0); // Add this state
+  const [smsScanEnabled, setSmsScanEnabled] = useState(true);
 
   // Initialize on mount
   useEffect(() => {
     setTodayDate(getTodayDate());
     loadStoredTransactions();
     requestSMSPermission();
+    loadSmsScanSetting();
 
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
@@ -83,6 +87,7 @@ const HomeScreen = ({ navigation, route }) => {
       }
       setAppState(nextAppState);
     });
+
 
     return () => subscription.remove();
   }, []);
@@ -93,6 +98,7 @@ const HomeScreen = ({ navigation, route }) => {
       loadStoredTransactions();
       loadCreditStats();
       loadProfitStats();
+      loadSmsScanSetting();
     }, [])
   );
 
@@ -124,6 +130,16 @@ const HomeScreen = ({ navigation, route }) => {
       setMonthRevenue(0);
     });
     return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener('settings:updated', (data) => {
+      if (data.smsScanEnabled !== undefined) {
+        setSmsScanEnabled(data.smsScanEnabled);
+      }
+    });
+
+    return () => subscription.remove();
   }, []);
 
   const getTodayDate = () => {
@@ -158,6 +174,17 @@ const HomeScreen = ({ navigation, route }) => {
     };
   };
 
+  const loadSmsScanSetting = async () => {
+    try {
+      const settings = await AsyncStorage.getItem('settings');
+      if (settings) {
+        const parsed = JSON.parse(settings);
+        setSmsScanEnabled(parsed.smsScanEnabled !== false); // default to true
+      }
+    } catch (error) {
+      console.error('Error loading SMS scan setting:', error);
+    }
+  }
   const loadStoredTransactions = async () => {
     try {
       const stored = await TransactionStorage.loadTransactions();
@@ -195,6 +222,20 @@ const HomeScreen = ({ navigation, route }) => {
   };
 
   const handleScanSMS = async () => {
+    if (!smsScanEnabled) {
+      Alert.alert(
+        'SMS Scanning Disabled',
+        'SMS scanning is currently turned off. Please enable it in Settings to use this feature.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Go to Settings',
+            onPress: () => navigation.navigate('Settings')
+          },
+        ]
+      );
+      return;
+    }
     await new Promise(resolve => setTimeout(resolve, 100));
     if (permissionStatus !== 'granted') {
       Alert.alert(
@@ -583,7 +624,7 @@ const HomeScreen = ({ navigation, route }) => {
             <View style={[styles.metricIconContainer, { backgroundColor: '#D1FAE5' }]}>
               <TrendingUp size={20} color="#065F46" />
             </View>
-            <Text style={styles.metricLabel}>Profit / Margin</Text>
+            <Text style={styles.metricLabel}>Profit / Sales</Text>
             <Text style={styles.metricValue}>
               Ksh {profitStats.todayProfit.toLocaleString()}
             </Text>
@@ -618,27 +659,40 @@ const HomeScreen = ({ navigation, route }) => {
         <View style={styles.actionCardsRow}>
           {/* SMS Scan Button */}
           <TouchableOpacity
-            style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
+            style={[
+              styles.scanButton,
+              !smsScanEnabled && styles.scanButtonDisabled,
+              isScanning && styles.scanButtonDisabled
+            ]}
             onPress={handleScanSMS}
-            disabled={isScanning}
+            disabled={!smsScanEnabled || isScanning}
             activeOpacity={0.8}
           >
-            <View style={styles.scanButtonIconContainer}>
+            <View style={[
+              styles.scanButtonIconContainer,
+              !smsScanEnabled && styles.scanButtonIconContainerDisabled
+            ]}>
               {isScanning ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : !smsScanEnabled ? (
+                <Zap size={18} color="rgba(255, 255, 255, 0.5)" /> // Dimmed icon when disabled
               ) : (
                 <Zap size={18} color="#FFFFFF" />
               )}
             </View>
             <Text style={styles.scanButtonTitle}>
-              {isScanning ? 'Scanning...' : 'Scan SMS'}
+              {!smsScanEnabled ? 'SMS Scan (Off)' : (isScanning ? 'Scanning...' : 'Scan SMS')}
             </Text>
             <Text style={styles.scanButtonSubtitle}>
-              {isScanning
-                ? 'Please wait'
-                : `${transactions.filter(t => t.source === 'sms_scan').length} messages found`}
+              {!smsScanEnabled
+                ? 'Feature disabled in Settings'
+                : isScanning
+                  ? 'Please wait'
+                  : `${transactions.filter(t => t.source === 'sms_scan').length} messages found`
+              }
             </Text>
           </TouchableOpacity>
+
 
           {/* Cash Sales Button */}
           <TouchableOpacity
@@ -1013,6 +1067,14 @@ const styles = StyleSheet.create({
   scanButtonSubtitle: {
     fontSize: 11,
     color: 'rgba(255, 255, 255, 0.8)',
+  },
+
+  scanButtonDisabled: {
+    backgroundColor: '#9CA3AF', // Gray color for disabled state
+    opacity: 0.7,
+  },
+  scanButtonIconContainerDisabled: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)', // Dimmed background for disabled
   },
   // CASH BUTTON - NEW GRADIENT STYLE
   cashButton: {
