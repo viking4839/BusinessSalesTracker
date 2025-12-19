@@ -1070,7 +1070,7 @@ const styles = StyleSheet.create({
   },
 
   scanButtonDisabled: {
-    backgroundColor: '#9CA3AF', // Gray color for disabled state
+    backgroundColor: '#5079c0ff', // Gray color for disabled state
     opacity: 0.7,
   },
   scanButtonIconContainerDisabled: {

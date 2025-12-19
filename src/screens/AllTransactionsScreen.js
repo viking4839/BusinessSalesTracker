@@ -24,7 +24,11 @@ import {
     Filter,
     TrendingUp,
     TrendingDown,
-    CreditCard
+    CreditCard,
+    Banknote,
+    Smartphone,
+    DollarSign,
+    Receipt
 } from 'lucide-react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import { useFocusEffect } from '@react-navigation/native';
@@ -54,7 +58,7 @@ const AllTransactionsScreen = ({ navigation }) => {
             const data = await AsyncStorage.getItem('transactions');
             const parsed = data ? JSON.parse(data) : [];
 
-            // Sort by timestamp
+            // Sort by timestamp (newest first)
             parsed.sort((a, b) => {
                 const dateA = new Date(a.timestamp || a.date || 0);
                 const dateB = new Date(b.timestamp || b.date || 0);
@@ -115,6 +119,8 @@ const AllTransactionsScreen = ({ navigation }) => {
             result = result.filter(t =>
                 (t.sender || '').toLowerCase().includes(q) ||
                 (t.bank || '').toLowerCase().includes(q) ||
+                (t.customerName || '').toLowerCase().includes(q) ||
+                (t.paymentMethod || '').toLowerCase().includes(q) ||
                 String(t.amount || '').includes(q)
             );
         }
@@ -140,12 +146,59 @@ const AllTransactionsScreen = ({ navigation }) => {
     const getTotals = (txns) => {
         return txns.reduce((acc, t) => {
             const amt = Number(t.amount) || 0;
-            if (amt > 0) acc.in += amt;
-            else acc.out += Math.abs(amt);
+            if (amt > 0) {
+                if (t.isSplitPayment && t.splitPayments) {
+                    // For split payments, add components to individual methods
+                    const cash = Number(t.splitPayments.cash) || 0;
+                    const mpesa = Number(t.splitPayments.mpesa) || 0;
+                    const bank = Number(t.splitPayments.bank) || 0;
+
+                    acc.cash += cash;
+                    acc.mpesa += mpesa;
+                    acc.bank += bank;
+
+                    // Track split payments
+                    acc.splitPaymentCount += 1;
+                    acc.splitPaymentTotal += amt;
+                } else {
+                    // For non-split payments, add to individual methods
+                    const method = t.paymentMethod || t.bank || 'Cash';
+                    const normalizedMethod = method.toLowerCase();
+
+                    if (normalizedMethod.includes('cash') || normalizedMethod === 'cash') {
+                        acc.cash += amt;
+                    } else if (normalizedMethod.includes('mpesa') || normalizedMethod.includes('m-pesa') || normalizedMethod === 'm-pesa') {
+                        acc.mpesa += amt;
+                    } else if (normalizedMethod.includes('bank') || normalizedMethod.includes('transfer')) {
+                        acc.bank += amt;
+                    } else if (normalizedMethod.includes('split')) {
+                        // Handle legacy split payments without isSplitPayment flag
+                        acc.splitPaymentCount += 1;
+                        acc.splitPaymentTotal += amt;
+                    } else {
+                        // Default to cash for unknown methods
+                        acc.cash += amt;
+                    }
+                }
+                acc.in += amt;
+            } else {
+                acc.out += Math.abs(amt);
+            }
             if (t.isBusinessTransaction && amt > 0) acc.business += amt;
             acc.count += 1;
             return acc;
-        }, { in: 0, out: 0, business: 0, count: 0, net: 0 });
+        }, {
+            in: 0,
+            out: 0,
+            business: 0,
+            count: 0,
+            net: 0,
+            cash: 0,
+            mpesa: 0,
+            bank: 0,
+            splitPaymentCount: 0,
+            splitPaymentTotal: 0
+        });
     };
 
     const renderSectionHeader = ({ section }) => (
@@ -163,7 +216,7 @@ const AllTransactionsScreen = ({ navigation }) => {
     const renderItem = ({ item }) => {
         const isIn = Number(item.amount || 0) > 0;
 
-        // FIXED: Safer inventory match check
+        // Safer inventory match check
         const hasMatch = item.inventoryMatch &&
             typeof item.inventoryMatch === 'object' &&
             !item.inventoryMatch.userConfirmed &&
@@ -173,11 +226,9 @@ const AllTransactionsScreen = ({ navigation }) => {
             <TouchableOpacity
                 style={styles.row}
                 onPress={() => {
-                    // FIXED: Use navigate instead of push to prevent stack buildup
-                    navigation.navigate('TransactionDetails', { 
+                    navigation.navigate('TransactionDetails', {
                         transaction: item,
-                        // Add a unique key to force re-render if same transaction
-                        timestamp: Date.now()
+                        timestamp: Date.now() // Add a unique key to force re-render if same transaction
                     });
                 }}
                 activeOpacity={0.7}
@@ -203,10 +254,14 @@ const AllTransactionsScreen = ({ navigation }) => {
 
                 <View style={styles.details}>
                     <Text style={styles.sender} numberOfLines={1}>
-                        {item.sender || item.from || 'Unknown'}
+                        {item.customerName || item.sender || item.from || 'Unknown'}
                     </Text>
                     <View style={styles.metaRow}>
-                        <Text style={styles.bank}>{item.bank || 'Unknown Bank'}</Text>
+                        <Text style={styles.bank}>
+                            {item.isSplitPayment
+                                ? 'Split Payment'
+                                : (item.paymentMethod || item.bank || 'Unknown')}
+                        </Text>
                         {item.isBusinessTransaction && (
                             <>
                                 <Text style={styles.dot}>•</Text>
@@ -220,6 +275,14 @@ const AllTransactionsScreen = ({ navigation }) => {
                                 <Text style={styles.dot}>•</Text>
                                 <View style={[styles.bizBadge, { backgroundColor: '#F3F4F6', borderColor: '#D1D5DB' }]}>
                                     <Text style={[styles.bizBadgeText, { color: '#6B7280' }]}>Manual</Text>
+                                </View>
+                            </>
+                        )}
+                        {item.isSplitPayment && (
+                            <>
+                                <Text style={styles.dot}>•</Text>
+                                <View style={[styles.bizBadge, { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' }]}>
+                                    <Text style={[styles.bizBadgeText, { color: '#D97706' }]}>Split</Text>
                                 </View>
                             </>
                         )}
@@ -252,9 +315,9 @@ const AllTransactionsScreen = ({ navigation }) => {
     const renderTransaction = ({ item }) => {
         const isIncome = item.type === 'sale' || item.type === 'income';
         const isCredit = item.isCredit || item.paymentMethod === 'credit_cleared' || item.paymentMethod === 'credit_payment';
-        
+
         return (
-            <TouchableOpacity 
+            <TouchableOpacity
                 style={styles.transactionCard}
                 onPress={() => setSelectedTransaction(item)}
                 activeOpacity={0.7}
@@ -274,13 +337,13 @@ const AllTransactionsScreen = ({ navigation }) => {
                                 <TrendingDown size={18} color={Colors.error} />
                             )}
                         </View>
-                        
+
                         <View style={styles.transactionDetails}>
                             <View style={styles.transactionTitleRow}>
                                 <Text style={styles.transactionTitle} numberOfLines={1}>
                                     {item.description || item.itemName || 'Transaction'}
                                 </Text>
-                                
+
                                 {/* Credit Badge */}
                                 {isCredit && (
                                     <View style={styles.creditBadge}>
@@ -290,7 +353,7 @@ const AllTransactionsScreen = ({ navigation }) => {
                                     </View>
                                 )}
                             </View>
-                            
+
                             {/* Customer Name for Credit */}
                             {isCredit && item.customerName && (
                                 <View style={styles.customerRow}>
@@ -298,7 +361,7 @@ const AllTransactionsScreen = ({ navigation }) => {
                                     <Text style={styles.customerName}>{item.customerName}</Text>
                                 </View>
                             )}
-                            
+
                             <Text style={styles.transactionDate}>
                                 {new Date(item.date || item.createdAt).toLocaleDateString('en-US', {
                                     month: 'short',
@@ -309,7 +372,7 @@ const AllTransactionsScreen = ({ navigation }) => {
                             </Text>
                         </View>
                     </View>
-                    
+
                     <Text style={[
                         styles.transactionAmount,
                         { color: isIncome ? Colors.success : Colors.error }
@@ -436,20 +499,61 @@ const AllTransactionsScreen = ({ navigation }) => {
                 </View>
             </View>
 
-            {/* Net Balance */}
-            <View style={styles.netBalanceCard}>
-                <View style={styles.netBalanceLeft}>
-                    <Text style={styles.netLabel}>Net Balance</Text>
-                    <Text style={[
-                        styles.netValue,
-                        { color: totals.net >= 0 ? Colors.success : Colors.error }
-                    ]}>
-                        Ksh {totals.net.toLocaleString()}
-                    </Text>
+            {/* Payment Method Breakdown - Includes Split Payments */}
+            <View style={styles.paymentBreakdownCard}>
+                <Text style={styles.breakdownTitle}>Payment Methods Breakdown</Text>
+                <View style={styles.breakdownRow}>
+                    <View style={styles.breakdownItem}>
+                        <View style={[styles.breakdownIcon, { backgroundColor: '#DCFCE7' }]}>
+                            <Banknote size={18} color={Colors.success} />
+                        </View>
+                        <View style={styles.breakdownInfo}>
+                            <Text style={styles.breakdownLabel}>Cash</Text>
+                            <Text style={styles.breakdownValue}>Ksh {totals.cash.toLocaleString()}</Text>
+                        </View>
+                    </View>
+
+                    <View style={styles.breakdownItem}>
+                        <View style={[styles.breakdownIcon, { backgroundColor: '#DBEAFE' }]}>
+                            <Smartphone size={18} color={Colors.primary} />
+                        </View>
+                        <View style={styles.breakdownInfo}>
+                            <Text style={styles.breakdownLabel}>M-Pesa</Text>
+                            <Text style={styles.breakdownValue}>Ksh {totals.mpesa.toLocaleString()}</Text>
+                        </View>
+                    </View>
+
+                    <View style={styles.breakdownItem}>
+                        <View style={[styles.breakdownIcon, { backgroundColor: '#FEF3C7' }]}>
+                            <CreditCard size={18} color="#F59E0B" />
+                        </View>
+                        <View style={styles.breakdownInfo}>
+                            <Text style={styles.breakdownLabel}>Bank</Text>
+                            <Text style={styles.breakdownValue}>Ksh {totals.bank.toLocaleString()}</Text>
+                        </View>
+                    </View>
                 </View>
-                <View style={styles.countBadge}>
-                    <Text style={styles.countNumber}>{totals.count}</Text>
-                    <Text style={styles.countLabel}>Total</Text>
+
+                {/* Split Payments Summary Row */}
+                {totals.splitPaymentCount > 0 && (
+                    <View style={styles.splitPaymentSummary}>
+                        <View style={styles.splitPaymentRow}>
+                            <Receipt size={16} color={Colors.primary} />
+                            <Text style={styles.splitPaymentLabel}>Split Payments:</Text>
+                        </View>
+                        <View style={styles.splitPaymentDetails}>
+                            <Text style={styles.splitPaymentCount}>{totals.splitPaymentCount} transaction(s)</Text>
+                            <Text style={styles.splitPaymentTotal}>Ksh {totals.splitPaymentTotal.toLocaleString()}</Text>
+                        </View>
+                    </View>
+                )}
+
+                {/* Total Count Badge */}
+                <View style={styles.totalCountRow}>
+                    <Text style={styles.totalCountLabel}>Total Transactions:</Text>
+                    <View style={styles.totalCountBadge}>
+                        <Text style={styles.totalCountText}>{totals.count}</Text>
+                    </View>
                 </View>
             </View>
 
@@ -498,30 +602,21 @@ const AllTransactionsScreen = ({ navigation }) => {
                 keyExtractor={(item, index) => item.id || `transaction-${index}`}
                 renderSectionHeader={renderSectionHeader}
                 renderItem={renderItem}
-                stickySectionHeadersEnabled={false}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        colors={[Colors.primary]}
-                        tintColor={Colors.primary}
-                    />
-                }
-                contentContainerStyle={[
-                    styles.listContent,
-                    filtered.length === 0 && styles.emptyContainer
-                ]}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                contentContainerStyle={styles.listContent}
                 ListEmptyComponent={
-                    <View style={styles.emptyState}>
-                        <View style={styles.emptyIconCircle}>
-                            <Filter size={32} color={Colors.textLight} />
+                    <View style={styles.emptyContainer}>
+                        <View style={styles.emptyState}>
+                            <View style={styles.emptyIconCircle}>
+                                <Package size={32} color={Colors.textSecondary} />
+                            </View>
+                            <Text style={styles.emptyTitle}>No Transactions</Text>
+                            <Text style={styles.emptySubtitle}>
+                                {searchQuery
+                                    ? 'No transactions match your search criteria'
+                                    : 'No transactions found for this period'}
+                            </Text>
                         </View>
-                        <Text style={styles.emptyTitle}>No transactions found</Text>
-                        <Text style={styles.emptySubtitle}>
-                            {searchQuery
-                                ? 'Try adjusting your search or filters'
-                                : 'Change the date range to see more transactions'}
-                        </Text>
                     </View>
                 }
             />
@@ -532,47 +627,42 @@ const AllTransactionsScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.background
+        backgroundColor: Colors.background,
     },
     header: {
+        backgroundColor: Colors.primary,
+        flexDirection: 'row',
+        alignItems: 'center',
         paddingHorizontal: Spacing.md,
         paddingTop: Spacing.lg,
         paddingBottom: Spacing.md,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        backgroundColor: Colors.primary,
     },
     backButton: {
-        width: 40,
-        height: 40,
-        justifyContent: 'center',
-        alignItems: 'center',
+        padding: Spacing.xs,
     },
     headerCenter: {
         flex: 1,
         alignItems: 'center',
     },
     title: {
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: '700',
-        color: Colors.surface
+        color: Colors.surface,
     },
     subtitle: {
         fontSize: 12,
-        color: 'rgba(255, 255, 255, 0.8)',
+        color: Colors.surface + 'CC',
         marginTop: 2,
     },
     headerActions: {
         flexDirection: 'row',
+        alignItems: 'center',
         gap: Spacing.xs,
-        width: 40,
-        justifyContent: 'flex-end',
     },
     headerBtn: {
-        width: 40,
-        height: 40,
-        borderRadius: BorderRadius.md,
+        width: 36,
+        height: 36,
+        borderRadius: 18,
         backgroundColor: Colors.surface,
         justifyContent: 'center',
         alignItems: 'center',
@@ -583,71 +673,64 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.surface,
         marginHorizontal: Spacing.md,
         marginTop: Spacing.sm,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        borderRadius: BorderRadius.lg,
+        paddingHorizontal: Spacing.sm,
+        borderRadius: BorderRadius.md,
         borderWidth: 1,
-        borderColor: Colors.primary,
-        gap: Spacing.sm,
-        ...Shadows.sm,
+        borderColor: Colors.border,
+        gap: Spacing.xs,
     },
     searchInput: {
         flex: 1,
         fontSize: 14,
         color: Colors.text,
-        padding: 0
+        paddingVertical: Spacing.sm,
     },
     filtersSection: {
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm,
-        backgroundColor: Colors.background,
     },
     filterChips: {
         flexDirection: 'row',
         gap: Spacing.xs,
-        flexWrap: 'wrap',
     },
     filterChip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: Spacing.md,
+        paddingHorizontal: Spacing.sm,
         paddingVertical: Spacing.xs,
-        borderRadius: 20,
+        borderRadius: BorderRadius.lg,
         backgroundColor: Colors.surface,
         borderWidth: 1,
         borderColor: Colors.border,
-        minHeight: 36,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
     },
     filterChipActive: {
         backgroundColor: Colors.primary,
         borderColor: Colors.primary,
-        ...Shadows.sm,
     },
     filterChipText: {
         fontSize: 13,
         fontWeight: '600',
-        color: Colors.text
+        color: Colors.text,
     },
     filterChipTextActive: {
-        color: Colors.surface
+        color: Colors.surface,
     },
     summaryContainer: {
         flexDirection: 'row',
         paddingHorizontal: Spacing.md,
         gap: Spacing.sm,
-        marginBottom: Spacing.sm,
     },
     summaryCard: {
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: Colors.surface,
-        borderRadius: BorderRadius.lg,
-        padding: Spacing.md,
+        padding: Spacing.sm,
+        borderRadius: BorderRadius.md,
         borderWidth: 1,
         borderColor: Colors.border,
-        ...Shadows.sm,
+        gap: Spacing.xs,
     },
     summaryIconContainer: {
         width: 40,
@@ -656,7 +739,6 @@ const styles = StyleSheet.create({
         backgroundColor: '#DCFCE7',
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: Spacing.sm,
     },
     summaryContent: {
         flex: 1,
@@ -664,57 +746,116 @@ const styles = StyleSheet.create({
     summaryLabel: {
         fontSize: 11,
         color: Colors.textSecondary,
-        marginBottom: 4
+        marginBottom: 2,
     },
     summaryValue: {
-        fontSize: 18,
-        fontWeight: '800',
-        color: Colors.text
+        fontSize: 15,
+        fontWeight: '700',
     },
-    netBalanceCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+    paymentBreakdownCard: {
         backgroundColor: Colors.surface,
         marginHorizontal: Spacing.md,
-        marginBottom: Spacing.md,
-        borderRadius: BorderRadius.lg,
+        marginTop: Spacing.sm,
         padding: Spacing.md,
+        borderRadius: BorderRadius.lg,
         borderWidth: 1,
         borderColor: Colors.border,
-        ...Shadows.sm,
     },
-    netBalanceLeft: {
+    breakdownTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: Spacing.sm,
+    },
+    breakdownRow: {
+        flexDirection: 'row',
+        gap: Spacing.xs,
+    },
+    breakdownItem: {
         flex: 1,
+        flexDirection: 'column',
+        alignItems: 'center',
+        backgroundColor: Colors.background,
+        padding: Spacing.sm,
+        borderRadius: BorderRadius.md,
     },
-    netLabel: {
+    breakdownIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.xs,
+    },
+    breakdownInfo: {
+        alignItems: 'center',
+    },
+    breakdownLabel: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        marginBottom: 2,
+    },
+    breakdownValue: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.text,
+    },
+    splitPaymentSummary: {
+        marginTop: Spacing.sm,
+        paddingTop: Spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: Colors.border,
+    },
+    splitPaymentRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+        marginBottom: 4,
+    },
+    splitPaymentLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: Colors.primary,
+    },
+    splitPaymentDetails: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    splitPaymentCount: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+    },
+    splitPaymentTotal: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.success,
+    },
+    totalCountRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: Spacing.sm,
+        paddingTop: Spacing.sm,
+        borderTopWidth: 1,
+        borderTopColor: Colors.border,
+        gap: Spacing.xs,
+    },
+    totalCountLabel: {
         fontSize: 12,
         color: Colors.textSecondary,
-        marginBottom: 4,
-        fontWeight: '500'
+        fontWeight: '600',
     },
-    netValue: {
-        fontSize: 24,
-        fontWeight: '800'
+    totalCountBadge: {
+        backgroundColor: Colors.primary,
+        paddingHorizontal: Spacing.sm,
+        paddingVertical: 2,
+        borderRadius: 12,
     },
-    countBadge: {
-        backgroundColor: Colors.background,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.xs,
-        borderRadius: BorderRadius.md,
-        alignItems: 'center',
-        minWidth: 60,
-    },
-    countNumber: {
-        fontSize: 20,
-        fontWeight: '800',
-        color: Colors.text
-    },
-    countLabel: {
-        fontSize: 10,
-        color: Colors.textSecondary,
-        marginTop: 2,
-        fontWeight: '500'
+    totalCountText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.surface,
     },
     listContent: {
         paddingBottom: Spacing.lg,
