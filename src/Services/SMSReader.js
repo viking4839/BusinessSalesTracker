@@ -12,7 +12,7 @@ class SMSReader {
     generateTransactionId(messageData, bank, amount) {
         // Create unique string from message properties
         const uniqueString = `${messageData._id || ''}_${messageData.body}_${messageData.date}_${bank}_${amount}`;
-        
+
         // Simple hash function (no crypto needed)
         let hash = 0;
         for (let i = 0; i < uniqueString.length; i++) {
@@ -20,7 +20,7 @@ class SMSReader {
             hash = ((hash << 5) - hash) + char;
             hash = hash & hash; // Convert to 32bit integer
         }
-        
+
         return `tx_${Math.abs(hash)}_${bank.replace(/\s+/g, '_')}`;
     }
 
@@ -76,12 +76,16 @@ class SMSReader {
         }
     }
 
-    // Read real SMS messages from device
-    async readRealSMS(limit = 200) {
+    // Read real SMS messages from device (ONLY last 5 minutes)
+    async readRealSMS(limit = 50) {  // Reduced limit since we're only getting recent messages
         return new Promise((resolve, reject) => {
+            // Calculate timestamp for 5 minutes ago
+            const fiveMinutesAgo = Date.now() - (5 * 60 * 1000); // 5 minutes in milliseconds
+
             const filter = {
                 box: 'inbox',
                 maxCount: limit,
+                minDate: fiveMinutesAgo,  // ✅ Only get messages from last 5 minutes
             };
 
             SmsAndroid.list(
@@ -91,16 +95,24 @@ class SMSReader {
                     reject(new Error('Failed to read SMS'));
                 },
                 (count, smsList) => {
-                    console.log(`📱 Successfully read ${count} SMS messages`);
+                    console.log(`📱 Successfully read ${count} SMS messages from last 5 minutes`);
                     const messages = JSON.parse(smsList);
-                    resolve(messages);
+
+                    // ✅ Additional filter: Double-check message timestamps
+                    const recentMessages = messages.filter(msg => {
+                        const msgTime = parseInt(msg.date) || 0;
+                        return msgTime >= fiveMinutesAgo;
+                    });
+
+                    console.log(`✅ ${recentMessages.length} messages within last 5 minutes`);
+                    resolve(recentMessages);
                 }
             );
         });
     }
 
-    // Main function to scan for transactions
-    async scanRecentTransactions(limit = 200) {
+    // Main function to scan for transactions (ONLY LAST 5 MINUTES)
+    async scanRecentTransactions(limit = 50) {  // Reduced limit
         const hasPermission = await this.checkPermission();
 
         if (!hasPermission) {
@@ -111,7 +123,7 @@ class SMSReader {
         }
 
         try {
-            ToastAndroid.show('Scanning SMS for transactions...', ToastAndroid.SHORT);
+            ToastAndroid.show('Scanning SMS from last 5 minutes...', ToastAndroid.SHORT);
 
             const messages = await this.readRealSMS(limit);
             const transactions = this.parseMessages(messages);
@@ -125,12 +137,12 @@ class SMSReader {
 
             this.lastScanTime = new Date();
 
-            console.log(`✅ Parsed ${transactions.length} transactions`);
+            console.log(`✅ Parsed ${transactions.length} transactions from last 5 minutes`);
 
             if (transactions.length > 0) {
-                ToastAndroid.show(`Found ${transactions.length} transactions!`, ToastAndroid.SHORT);
+                ToastAndroid.show(`Found ${transactions.length} recent transactions!`, ToastAndroid.SHORT);
             } else {
-                ToastAndroid.show('No transactions found in recent SMS', ToastAndroid.SHORT);
+                ToastAndroid.show('No transactions in last 5 minutes', ToastAndroid.SHORT);
             }
 
             return transactions;
@@ -385,7 +397,7 @@ class SMSReader {
             if (!inventory || inventory.length === 0) return null;
 
             // Find exact price matches
-            const exactMatches = inventory.filter(item => 
+            const exactMatches = inventory.filter(item =>
                 item.unitPrice === amount && item.quantity > 0
             );
 
@@ -425,8 +437,8 @@ class SMSReader {
             return {
                 matchType: 'multiple',
                 matches: allMatches.map(item => ({
-                  item,
-                  suggestedQuantity: Math.round(amount / item.unitPrice),
+                    item,
+                    suggestedQuantity: Math.round(amount / item.unitPrice),
                 })),
                 confidence: 'low',
                 userConfirmed: false,

@@ -209,7 +209,12 @@ class NotificationService {
         return await this._showNotification(
             '⚠️ Low Stock Alert',
             `${itemName} is running low (${quantity} left, threshold: ${threshold})`,
-            { type: 'low_stock', itemName, quantity, itemId },
+            {
+                type: 'low_stock',
+                itemName: String(itemName || ''),
+                quantity: String(quantity || 0),
+                itemId: String(itemId || '')  // ✅ FIX: Convert to string
+            },
             notificationKey
         );
     }
@@ -230,7 +235,13 @@ class NotificationService {
         return await this._showNotification(
             urgency,
             `${itemName} expires on ${new Date(expiryDate).toLocaleDateString()} (${daysUntilExpiry} days)`,
-            { type: 'expiry', itemName, expiryDate, daysUntilExpiry, itemId },
+            {
+                type: 'expiry',
+                itemName: String(itemName || ''),
+                expiryDate: String(expiryDate || ''),
+                daysUntilExpiry: String(daysUntilExpiry || 0),
+                itemId: String(itemId || '')  // ✅ FIX: Convert to string
+            },
             notificationKey
         );
     }
@@ -246,7 +257,13 @@ class NotificationService {
         return await this._showNotification(
             '💳 Credit Overdue',
             `${customerName} is overdue by ${daysOverdue} day(s). Balance: Ksh ${amount.toLocaleString()}`,
-            { type: 'credit_overdue', customerName, daysOverdue, amount, creditId },
+            {
+                type: 'credit_overdue',
+                customerName: String(customerName || ''),
+                daysOverdue: String(daysOverdue || 0),
+                amount: String(amount || 0),
+                creditId: String(creditId || '')  // ✅ FIX: Convert to string
+            },
             notificationKey
         );
     }
@@ -263,7 +280,10 @@ class NotificationService {
         return await this._showNotification(
             '⚠️ Multiple Low Stock Items',
             `${count} items are running low. Check your inventory.`,
-            { type: 'multiple_low_stock', count },
+            {
+                type: 'multiple_low_stock',
+                count: String(count || 0)  // ✅ FIX: Convert to string
+            },
             notificationKey
         );
     }
@@ -510,6 +530,169 @@ class NotificationService {
             { type: 'test' }
         );
     }
+
+    /**
+ * Schedule a business reminder notification
+ */
+    static async scheduleReminder(reminder) {
+        try {
+            const now = Date.now();
+            const reminderTime = reminder.timestamp;
+
+            // CRITICAL FIX: Ensure timestamp is in the future
+            if (reminderTime <= now) {
+                console.error('❌ Reminder time must be in the future');
+                console.error('   Now:', new Date(now).toISOString());
+                console.error('   Reminder:', new Date(reminderTime).toISOString());
+
+                // Auto-adjust to 1 minute from now if time is in past
+                const adjustedTime = now + (60 * 1000); // 1 minute from now
+                console.log('⚠️ Auto-adjusting to:', new Date(adjustedTime).toISOString());
+
+                const trigger = {
+                    type: TriggerType.TIMESTAMP,
+                    timestamp: adjustedTime,
+                };
+
+                const notificationId = await notifee.createTriggerNotification(
+                    {
+                        id: `reminder_${reminder.id}`,
+                        title: `${reminder.categoryName} Reminder`,
+                        body: reminder.title,
+                        android: {
+                            channelId: CHANNEL_ID,
+                            smallIcon: 'ic_notification',
+                            color: reminder.categoryColor || '#5F3DC4',
+                            pressAction: {
+                                id: 'view_reminder',
+                                launchActivity: 'default',
+                            },
+                            data: {
+                                type: 'reminder',
+                                reminderId: String(reminder.id || ''),  // ✅ FIX: Convert to string
+                                category: String(reminder.category || ''),  // ✅ FIX: Convert to string
+                            },
+                        },
+                    },
+                    trigger
+                );
+
+                console.log('✅ Reminder scheduled (adjusted):', notificationId);
+                return notificationId;
+            }
+
+            // Normal scheduling for future times
+            const trigger = {
+                type: TriggerType.TIMESTAMP,
+                timestamp: reminderTime,
+            };
+
+            const notificationId = await notifee.createTriggerNotification(
+                {
+                    id: `reminder_${reminder.id}`,
+                    title: `${reminder.categoryName} Reminder`,
+                    body: reminder.title,
+                    android: {
+                        channelId: CHANNEL_ID,
+                        smallIcon: 'ic_notification',
+                        color: reminder.categoryColor || '#5F3DC4',
+                        pressAction: {
+                            id: 'view_reminder',
+                            launchActivity: 'default',
+                        },
+                        data: {
+                            type: 'reminder',
+                            reminderId: String(reminder.id || ''),  // ✅ FIX: Convert to string
+                            category: String(reminder.category || ''),  // ✅ FIX: Convert to string
+                        },
+                    },
+                },
+                trigger
+            );
+
+            console.log('✅ Reminder notification scheduled:', notificationId);
+            console.log('   Time:', new Date(reminderTime).toISOString());
+            return notificationId;
+        } catch (error) {
+            console.error('Error scheduling reminder:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Cancel a reminder notification
+     */
+    static async cancelReminder(notificationId) {
+        try {
+            await notifee.cancelNotification(notificationId);
+            console.log('✅ Reminder notification cancelled:', notificationId);
+            return true;
+        } catch (error) {
+            console.error('Error cancelling reminder:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Show today's reminders summary (call at 8 AM)
+     */
+    static async showTodaysReminders() {
+        try {
+            const ReminderStorage = require('../utils/ReminderStorage').default;
+            const todayReminders = await ReminderStorage.getTodayReminders();
+
+            if (todayReminders.length > 0) {
+                await notifee.displayNotification({
+                    title: '📋 Today\'s Business Reminders',
+                    body: `You have ${todayReminders.length} reminder(s) scheduled today`,
+                    android: {
+                        channelId: CHANNEL_ID,
+                        groupSummary: true,
+                        pressAction: {
+                            id: 'view_reminders',
+                            launchActivity: 'default',
+                        },
+                    },
+                });
+            }
+        } catch (error) {
+            console.error('Error showing today\'s reminders:', error);
+        }
+    }
+
+    /**
+     * Check for overdue reminders on app launch
+     */
+    static async checkOverdueReminders() {
+        try {
+            const ReminderStorage = require('../utils/ReminderStorage').default;
+            const overdue = await ReminderStorage.getOverdueReminders();
+
+            if (overdue.length > 0) {
+                await notifee.displayNotification({
+                    title: '⚠️ Overdue Reminders',
+                    body: `You have ${overdue.length} overdue reminder(s)`,
+                    android: {
+                        channelId: CHANNEL_ID,
+                        importance: 4,
+                        pressAction: {
+                            id: 'view_reminders',
+                            launchActivity: 'default',
+                        },
+                        data: {
+                            type: 'overdue_reminders',
+                            count: overdue.length,
+                        },
+                    },
+                });
+
+                console.log(`⚠️ ${overdue.length} overdue reminders found`);
+            }
+        } catch (error) {
+            console.error('Error checking overdue reminders:', error);
+        }
+    }
 }
+
 
 export default NotificationService;

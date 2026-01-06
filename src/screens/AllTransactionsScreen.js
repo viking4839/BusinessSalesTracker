@@ -143,62 +143,96 @@ const AllTransactionsScreen = ({ navigation }) => {
         return Array.from(map.entries()).map(([title, data]) => ({ title, data }));
     };
 
-    const getTotals = (txns) => {
-        return txns.reduce((acc, t) => {
+ const getTotals = (txns) => {
+        // 1. Initialize Independent Buckets (Separation Strategy)
+        // Single Payment Buckets
+        let singleCash = 0;
+        let singleMpesa = 0;
+        let singleBank = 0;
+
+        // Split Payment Buckets
+        let splitCash = 0;
+        let splitMpesa = 0;
+        let splitBank = 0;
+        let splitCount = 0;
+        let splitTotalValue = 0;
+
+        // General Totals
+        let totalIn = 0;
+        let totalOut = 0;
+        let businessTotal = 0;
+        let count = 0;
+
+        // 2. Iterate and sort into buckets
+        txns.forEach(t => {
             const amt = Number(t.amount) || 0;
+            count += 1;
+
             if (amt > 0) {
-                if (t.isSplitPayment && t.splitPayments) {
-                    // For split payments, add components to individual methods
-                    const cash = Number(t.splitPayments.cash) || 0;
-                    const mpesa = Number(t.splitPayments.mpesa) || 0;
-                    const bank = Number(t.splitPayments.bank) || 0;
+                totalIn += amt;
+                if (t.isBusinessTransaction) businessTotal += amt;
 
-                    acc.cash += cash;
-                    acc.mpesa += mpesa;
-                    acc.bank += bank;
+                // --- STRATEGY: CHECK FOR SPLIT FIRST ---
+                // We check if it has the flag OR if the method says 'split'
+                const isSplit = t.isSplitPayment || 
+                              (t.paymentMethod && t.paymentMethod.toLowerCase().includes('split'));
 
-                    // Track split payments
-                    acc.splitPaymentCount += 1;
-                    acc.splitPaymentTotal += amt;
-                } else {
-                    // For non-split payments, add to individual methods
-                    const method = t.paymentMethod || t.bank || 'Cash';
-                    const normalizedMethod = method.toLowerCase();
-
-                    if (normalizedMethod.includes('cash') || normalizedMethod === 'cash') {
-                        acc.cash += amt;
-                    } else if (normalizedMethod.includes('mpesa') || normalizedMethod.includes('m-pesa') || normalizedMethod === 'm-pesa') {
-                        acc.mpesa += amt;
-                    } else if (normalizedMethod.includes('bank') || normalizedMethod.includes('transfer')) {
-                        acc.bank += amt;
-                    } else if (normalizedMethod.includes('split')) {
-                        // Handle legacy split payments without isSplitPayment flag
-                        acc.splitPaymentCount += 1;
-                        acc.splitPaymentTotal += amt;
+                if (isSplit) {
+                    // LOGIC A: Handle Split Payment
+                    // strict check: does the breakdown object exist?
+                    if (t.splitPayments && typeof t.splitPayments === 'object') {
+                        splitCash += Number(t.splitPayments.cash) || 0;
+                        splitMpesa += Number(t.splitPayments.mpesa) || 0;
+                        splitBank += Number(t.splitPayments.bank) || 0;
+                        
+                        splitCount += 1;
+                        splitTotalValue += amt;
                     } else {
-                        // Default to cash for unknown methods
-                        acc.cash += amt;
+                        // FALLBACK: valid "Split" tag but missing breakdown data (The "Legacy Data" Fix)
+                        // We dump the whole amount into Cash so it doesn't disappear from the UI
+                        // You can change 'singleCash' to 'splitCash' if you prefer, 
+                        // but putting it in singleCash keeps the 'Split' stats clean.
+                        singleCash += amt; 
+                        
+                        // Still count it as a split transaction for the list
+                        splitCount += 1;
+                        splitTotalValue += amt;
+                    }
+                } else {
+                    // LOGIC B: Handle Single Payment (Independent)
+                    const method = (t.paymentMethod || t.bank || 'Cash').toLowerCase();
+
+                    if (method.includes('mpesa') || method.includes('m-pesa')) {
+                        singleMpesa += amt;
+                    } else if (method.includes('bank') || method.includes('card') || method.includes('transfer')) {
+                        singleBank += amt;
+                    } else {
+                        // Default to cash for 'Cash' or unknown types
+                        singleCash += amt;
                     }
                 }
-                acc.in += amt;
             } else {
-                acc.out += Math.abs(amt);
+                totalOut += Math.abs(amt);
             }
-            if (t.isBusinessTransaction && amt > 0) acc.business += amt;
-            acc.count += 1;
-            return acc;
-        }, {
-            in: 0,
-            out: 0,
-            business: 0,
-            count: 0,
-            net: 0,
-            cash: 0,
-            mpesa: 0,
-            bank: 0,
-            splitPaymentCount: 0,
-            splitPaymentTotal: 0
         });
+
+        // 3. Final Merge for Display
+        return {
+            in: totalIn,
+            out: totalOut,
+            business: businessTotal,
+            count: count,
+            net: totalIn - totalOut,
+            
+            // The display values are the sum of both independent calculations
+            cash: singleCash + splitCash,
+            mpesa: singleMpesa + splitMpesa,
+            bank: singleBank + splitBank,
+            
+            // These allow you to debug if needed
+            splitPaymentCount: splitCount,
+            splitPaymentTotal: splitTotalValue
+        };
     };
 
     const renderSectionHeader = ({ section }) => (

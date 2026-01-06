@@ -49,6 +49,16 @@ const TypographyObject = {
 export const Typography = TypographyObject;
 export const TYPOGRAPHY = TypographyObject;
 
+// Fonts
+const FontsObject = {
+  regular: 'System',
+  medium: 'System',
+  semiBold: 'System',
+  bold: 'System',
+};
+
+export const Fonts = FontsObject;
+
 // Spacing
 const SpacingObject = {
   xs: 4,
@@ -129,6 +139,7 @@ export const Screen = ScreenObject;
 export default {
   Colors: ColorsObject,
   Typography: TypographyObject,
+  Fonts: FontsObject,
   Spacing: SpacingObject,
   BorderRadius: BorderRadiusObject,
   Shadows: ShadowsObject,

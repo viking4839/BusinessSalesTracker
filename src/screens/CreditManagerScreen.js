@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, ScrollView, Platform, Animated } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, ScrollView, Platform, Animated, DeviceEventEmitter } from 'react-native';
 import { Colors, Spacing, BorderRadius, Shadows } from '../styles/Theme';
 import { ArrowLeft, Plus, CheckCircle, AlertTriangle, User, X, Search, DollarSign, Clock, Calendar, Phone, FileText, Trash2, Package } from 'lucide-react-native';
 import CreditStorage from '../utils/CreditStorage';
@@ -304,7 +304,20 @@ const CreditManagerScreen = ({ navigation }) => {
 
     const recordPayment = async (amount, note) => {
         try {
-            // Get the inventory item to calculate profit
+            const numAmount = parseFloat(amount);
+
+            if (isNaN(numAmount) || numAmount <= 0) {
+                Alert.alert('Invalid Amount', 'Please enter a valid amount');
+                return;
+            }
+
+            if (numAmount > showDetail.remainingBalance) {
+                Alert.alert('Amount Too High',
+                    `Payment cannot exceed remaining balance of Ksh ${showDetail.remainingBalance.toLocaleString()}`);
+                return;
+            }
+
+            // Get wholesale price for profit calculation
             let wholesalePrice = 0;
             if (showDetail.inventoryItemId) {
                 const invItem = inventory.find(i => i.id === showDetail.inventoryItemId);
@@ -313,40 +326,60 @@ const CreditManagerScreen = ({ navigation }) => {
                 }
             }
 
-            // Calculate proportional quantity for partial payment
-            const paymentRatio = amount / showDetail.totalAmount;
-            const proportionalQty = showDetail.quantity * paymentRatio;
+            // Calculate profit for this partial payment
+            const portionPaid = numAmount / showDetail.totalAmount;
+            const profit = numAmount - (wholesalePrice * showDetail.quantity * portionPaid);
 
-            // Record partial payment as transaction with profit data
+            // Record as transaction
             await TransactionStorage.addTransaction({
                 type: 'sale',
                 description: `Credit Payment: ${showDetail.itemName}`,
-                amount: amount,
+                amount: numAmount,
                 customerName: showDetail.customerName,
                 itemName: showDetail.itemName,
-                quantity: proportionalQty,
+                quantity: showDetail.quantity * portionPaid,
                 unitPrice: showDetail.unitPrice,
                 wholesalePrice: wholesalePrice,
-                profit: amount - (wholesalePrice * proportionalQty),
+                profit: profit,
                 linkedInventoryId: showDetail.inventoryItemId,
                 paymentMethod: 'credit_payment',
-                notes: `Partial payment from ${showDetail.customerName}. ${note || ''}`
+                notes: note || `Partial payment for credit. ${note || ''}`
             });
 
-            const ok = await CreditStorage.recordPayment(showDetail.id, amount, note);
+            // Record the payment in credit
+            const ok = await CreditStorage.recordPayment(showDetail.id, numAmount, note);
+
             if (ok) {
                 const updated = await CreditStorage.loadCredits();
                 setCredits(updated);
                 setShowDetail(updated.find(c => c.id === showDetail.id));
-                Alert.alert('Success', `Payment of Ksh ${amount.toLocaleString()} recorded`);
+                setShowPartialPay(false);
+                setPartialAmount('');
+
+                // ✅ ADD: Emit events
+                console.log('📢 Emitting creditUpdated event (partial payment)');
+                DeviceEventEmitter.emit('creditUpdated');
+                DeviceEventEmitter.emit('profitReportUpdated');
+
+                Alert.alert('Success', 'Payment recorded');
             }
         } catch (error) {
             console.error('Error recording payment:', error);
-            const ok = await CreditStorage.recordPayment(showDetail.id, amount, note);
+
+            // Try to record payment anyway
+            const ok = await CreditStorage.recordPayment(showDetail.id, parseFloat(amount), note);
             if (ok) {
                 const updated = await CreditStorage.loadCredits();
                 setCredits(updated);
                 setShowDetail(updated.find(c => c.id === showDetail.id));
+                setShowPartialPay(false);
+                setPartialAmount('');
+
+                // ✅ ADD: Emit events even on error
+                DeviceEventEmitter.emit('creditUpdated');
+                DeviceEventEmitter.emit('profitReportUpdated');
+
+                Alert.alert('Payment Recorded', 'Payment has been recorded');
             }
         }
     };
@@ -387,6 +420,11 @@ const CreditManagerScreen = ({ navigation }) => {
             setCredits(updated);
             setShowDetail(updated.find(c => c.id === showDetail.id));
 
+            // ✅ ADD: Emit event to notify other screens
+            console.log('📢 Emitting creditUpdated event');
+            DeviceEventEmitter.emit('creditUpdated');
+            DeviceEventEmitter.emit('profitReportUpdated');
+
             Alert.alert('Success', 'Credit cleared and recorded in transactions');
         } catch (error) {
             console.error('Error clearing credit:', error);
@@ -394,6 +432,11 @@ const CreditManagerScreen = ({ navigation }) => {
             const updated = await CreditStorage.loadCredits();
             setCredits(updated);
             setShowDetail(updated.find(c => c.id === showDetail.id));
+
+            // ✅ ADD: Emit event even on error
+            DeviceEventEmitter.emit('creditUpdated');
+            DeviceEventEmitter.emit('profitReportUpdated');
+
             Alert.alert('Credit Cleared', 'Credit marked as cleared');
         }
     };
@@ -583,26 +626,55 @@ const CreditManagerScreen = ({ navigation }) => {
 
                                 {/* Quick Select Previous Customers */}
                                 {customers.length > 0 && (
-                                    <View style={styles.inventorySection}>
-                                        <Text style={styles.inventoryLabel}>Previous customers:</Text>
-                                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                                            {customers.map((customer, idx) => (
-                                                <TouchableOpacity
-                                                    key={`customer-${idx}`}
-                                                    style={[
-                                                        styles.inventoryChip,
-                                                        form.customerName === customer && styles.inventoryChipActive
-                                                    ]}
-                                                    onPress={() => setForm(f => ({ ...f, customerName: customer }))}
-                                                >
-                                                    <Text style={[
-                                                        styles.inventoryChipText,
-                                                        form.customerName === customer && styles.inventoryChipTextActive
-                                                    ]}>
-                                                        {customer}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
+                                    <View style={styles.quickSelectSection}>
+                                        <View style={styles.quickSelectHeader}>
+                                            <User size={14} color={Colors.primary} />
+                                            <Text style={styles.quickSelectTitle}>Previous customers:</Text>
+                                        </View>
+                                        <ScrollView
+                                            horizontal
+                                            showsHorizontalScrollIndicator={false}
+                                            contentContainerStyle={styles.quickSelectScroll}
+                                        >
+                                            {customers.map((customer, idx) => {
+                                                const isSelected = form.customerName === customer;
+                                                const initials = customer.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={`customer-${idx}`}
+                                                        style={[
+                                                            styles.customerCard,
+                                                            isSelected && styles.customerCardActive
+                                                        ]}
+                                                        onPress={() => setForm(f => ({ ...f, customerName: customer }))}
+                                                        activeOpacity={0.7}
+                                                    >
+                                                        <View style={[
+                                                            styles.customerAvatar,
+                                                            isSelected && styles.customerAvatarActive
+                                                        ]}>
+                                                            <Text style={[
+                                                                styles.customerInitials,
+                                                                isSelected && styles.customerInitialsActive
+                                                            ]}>
+                                                                {initials}
+                                                            </Text>
+                                                        </View>
+                                                        <Text style={[
+                                                            styles.customerCardName,
+                                                            isSelected && styles.customerCardNameActive
+                                                        ]} numberOfLines={1}>
+                                                            {customer}
+                                                        </Text>
+                                                        {isSelected && (
+                                                            <View style={styles.checkBadge}>
+                                                                <CheckCircle size={12} color={Colors.success} />
+                                                            </View>
+                                                        )}
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
                                         </ScrollView>
                                     </View>
                                 )}
@@ -624,35 +696,92 @@ const CreditManagerScreen = ({ navigation }) => {
                             </View>
 
                             {/* Multi-Item Selection Section */}
+
                             <View style={styles.formSection}>
-                                <Text style={styles.sectionTitle}>Add Items from Inventory</Text>
-                                <Text style={styles.inventoryLabel}>Tap items to add (can select multiple):</Text>
+                                <View style={styles.sectionHeaderWithIcon}>
+                                    <Package size={16} color={Colors.primary} />
+                                    <Text style={styles.sectionTitle}>Add Items from Inventory</Text>
+                                </View>
+                                <Text style={styles.sectionSubtitle}>
+                                    Tap items to add • Multiple selection enabled
+                                </Text>
 
                                 {inventory.length > 0 ? (
-                                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+                                    <ScrollView
+                                        horizontal
+                                        showsHorizontalScrollIndicator={false}
+                                        contentContainerStyle={styles.inventoryScroll}
+                                    >
                                         {inventory.map((item, idx) => {
                                             const isAdded = selectedItems.some(i => i.inventoryItemId === item.id);
+                                            const stockLevel = item.quantity <= 5 ? 'low' : item.quantity <= 15 ? 'medium' : 'high';
+
                                             return (
                                                 <TouchableOpacity
                                                     key={`inv-${item.id}-${idx}`}
                                                     style={[
-                                                        styles.inventoryChip,
-                                                        isAdded && styles.inventoryChipActive
+                                                        styles.inventoryItemCard,
+                                                        isAdded && styles.inventoryItemCardActive
                                                     ]}
                                                     onPress={() => handleAddItemToList(item)}
+                                                    activeOpacity={0.7}
                                                 >
+                                                    <View style={styles.inventoryItemHeader}>
+                                                        <View style={[
+                                                            styles.inventoryItemIcon,
+                                                            isAdded && styles.inventoryItemIconActive
+                                                        ]}>
+                                                            <Package size={16} color={isAdded ? Colors.success : Colors.textSecondary} />
+                                                        </View>
+                                                        {isAdded && (
+                                                            <View style={styles.addedBadge}>
+                                                                <CheckCircle size={14} color={Colors.success} />
+                                                            </View>
+                                                        )}
+                                                    </View>
+
                                                     <Text style={[
-                                                        styles.inventoryChipText,
-                                                        isAdded && styles.inventoryChipTextActive
-                                                    ]}>
-                                                        {item.name} (Ksh {item.unitPrice})
+                                                        styles.inventoryItemName,
+                                                        isAdded && styles.inventoryItemNameActive
+                                                    ]} numberOfLines={2}>
+                                                        {item.name}
                                                     </Text>
+
+                                                    <View style={styles.inventoryItemFooter}>
+                                                        <View style={styles.inventoryPriceContainer}>
+                                                            <Text style={styles.inventoryPriceCurrency}>Ksh</Text>
+                                                            <Text style={[
+                                                                styles.inventoryItemPrice,
+                                                                isAdded && styles.inventoryItemPriceActive
+                                                            ]}>
+                                                                {item.unitPrice.toLocaleString()}
+                                                            </Text>
+                                                        </View>
+
+                                                        <View style={[
+                                                            styles.stockBadge,
+                                                            stockLevel === 'low' && styles.stockBadgeLow,
+                                                            stockLevel === 'medium' && styles.stockBadgeMedium,
+                                                            stockLevel === 'high' && styles.stockBadgeHigh
+                                                        ]}>
+                                                            <Text style={[
+                                                                styles.stockBadgeText,
+                                                                stockLevel === 'low' && styles.stockBadgeTextLow
+                                                            ]}>
+                                                                {item.quantity} left
+                                                            </Text>
+                                                        </View>
+                                                    </View>
                                                 </TouchableOpacity>
                                             );
                                         })}
                                     </ScrollView>
                                 ) : (
-                                    <Text style={styles.noItemsText}>No inventory items available</Text>
+                                    <View style={styles.emptyInventoryCard}>
+                                        <Package size={32} color={Colors.border} />
+                                        <Text style={styles.emptyInventoryText}>No inventory items available</Text>
+                                        <Text style={styles.emptyInventorySubtext}>Add items to inventory first</Text>
+                                    </View>
                                 )}
                             </View>
 
@@ -1372,6 +1501,208 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.sm,
+    },
+
+    // ✅ NEW: Enhanced Quick Select Customers Styles
+    quickSelectSection: {
+        marginBottom: Spacing.md,
+    },
+    quickSelectHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: Spacing.sm,
+    },
+    quickSelectTitle: {
+        fontSize: 13,
+        color: Colors.textSecondary,
+        fontWeight: '600',
+    },
+    quickSelectScroll: {
+        paddingRight: Spacing.md,
+    },
+    customerCard: {
+        width: 100,
+        backgroundColor: Colors.surface,
+        borderRadius: 12,
+        padding: Spacing.sm,
+        marginRight: Spacing.sm,
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: Colors.border,
+        position: 'relative',
+    },
+    customerCardActive: {
+        borderColor: Colors.success,
+        backgroundColor: Colors.success + '10',
+    },
+    customerAvatar: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: Colors.primary + '15',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: Spacing.xs,
+    },
+    customerAvatarActive: {
+        backgroundColor: Colors.success + '20',
+    },
+    customerInitials: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: Colors.primary,
+    },
+    customerInitialsActive: {
+        color: Colors.success,
+    },
+    customerCardName: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: Colors.text,
+        textAlign: 'center',
+    },
+    customerCardNameActive: {
+        color: Colors.success,
+        fontWeight: '700',
+    },
+    checkBadge: {
+        position: 'absolute',
+        top: 6,
+        right: 6,
+        backgroundColor: Colors.surface,
+        borderRadius: 10,
+        padding: 2,
+    },
+
+    // ✅ NEW: Enhanced Inventory Section Styles
+    sectionHeaderWithIcon: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 4,
+    },
+    sectionSubtitle: {
+        fontSize: 12,
+        color: Colors.textSecondary,
+        marginBottom: Spacing.md,
+    },
+    inventoryScroll: {
+        paddingRight: Spacing.md,
+    },
+    inventoryItemCard: {
+        width: 140,
+        backgroundColor: Colors.surface,
+        borderRadius: 12,
+        padding: Spacing.md,
+        marginRight: Spacing.sm,
+        borderWidth: 2,
+        borderColor: Colors.border,
+        position: 'relative',
+    },
+    inventoryItemCardActive: {
+        borderColor: Colors.success,
+        backgroundColor: Colors.success + '08',
+    },
+    inventoryItemHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.sm,
+    },
+    inventoryItemIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 8,
+        backgroundColor: Colors.background,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    inventoryItemIconActive: {
+        backgroundColor: Colors.success + '15',
+    },
+    addedBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        backgroundColor: Colors.surface,
+        borderRadius: 12,
+        padding: 2,
+        ...Shadows.sm,
+    },
+    inventoryItemName: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: Colors.text,
+        marginBottom: Spacing.xs,
+        minHeight: 34,
+    },
+    inventoryItemNameActive: {
+        color: Colors.success,
+    },
+    inventoryItemFooter: {
+        marginTop: Spacing.xs,
+    },
+    inventoryPriceContainer: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        marginBottom: 6,
+    },
+    inventoryPriceCurrency: {
+        fontSize: 11,
+        color: Colors.textSecondary,
+        marginRight: 2,
+    },
+    inventoryItemPrice: {
+        fontSize: 16,
+        fontWeight: '800',
+        color: Colors.text,
+    },
+    inventoryItemPriceActive: {
+        color: Colors.success,
+    },
+    stockBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+        alignSelf: 'flex-start',
+    },
+    stockBadgeHigh: {
+        backgroundColor: '#D1FAE5',
+    },
+    stockBadgeMedium: {
+        backgroundColor: '#FEF3C7',
+    },
+    stockBadgeLow: {
+        backgroundColor: '#FEE2E2',
+    },
+    stockBadgeText: {
+        fontSize: 10,
+        fontWeight: '600',
+        color: '#059669',
+    },
+    stockBadgeTextLow: {
+        color: '#DC2626',
+    },
+    emptyInventoryCard: {
+        backgroundColor: Colors.background,
+        borderRadius: 12,
+        padding: Spacing.xl,
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: Colors.border,
+        borderStyle: 'dashed',
+    },
+    emptyInventoryText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: Colors.textSecondary,
+        marginTop: Spacing.sm,
+    },
+    emptyInventorySubtext: {
+        fontSize: 12,
+        color: Colors.textLight,
+        marginTop: 4,
     },
     modalIconContainer: {
         width: 40,

@@ -96,6 +96,7 @@ async function addTransaction(transactionData) {
             description: transactionData.description || '',
             amount: transactionData.amount || 0,
             customerName: transactionData.customerName || '',
+            customerPhone: transactionData.customerPhone || '',
             itemName: transactionData.itemName || '',
             quantity: transactionData.quantity || 1,
             unitPrice: transactionData.unitPrice || 0,
@@ -104,17 +105,43 @@ async function addTransaction(transactionData) {
             linkedInventoryId: transactionData.linkedInventoryId || null,
             paymentMethod: transactionData.paymentMethod || 'cash',
             notes: transactionData.notes || '',
+            isSplitPayment: transactionData.isSplitPayment || false,
+            splitPayments: transactionData.splitPayments || null,
+            splitTotal: transactionData.splitTotal || null,
+            paymentBreakdown: transactionData.paymentBreakdown || null,
+            items: transactionData.items || [],
+            isMultiItem: transactionData.isMultiItem || false,
+            linkedInventoryName: transactionData.linkedInventoryName || null,
+            saleQuantity: transactionData.saleQuantity || null,
+            saleUnitPrice: transactionData.saleUnitPrice || null,
+            discount: transactionData.discount || null,
+            subtotal: transactionData.subtotal || null,
             isCredit: transactionData.paymentMethod === 'credit_cleared' || transactionData.paymentMethod === 'credit_payment',
             creditType: transactionData.paymentMethod === 'credit_cleared' ? 'cleared' :
-                transactionData.paymentMethod === 'credit_payment' ? 'payment' : null,
+            transactionData.paymentMethod === 'credit_payment' ? 'payment' : null,
+            
+            // Timestamps
             createdAt: new Date().toISOString(),
-            date: new Date().toISOString(),
+            date: transactionData.timestamp || new Date().toISOString(),
+            timestamp: transactionData.timestamp || new Date().toISOString(),
         };
 
         transactions.unshift(newTransaction);
         await saveTransactions(transactions);
 
-        console.log('✅ Transaction added:', newTransaction.id, 'Profit:', profit);
+        // Debug logging
+        console.log('✅ Transaction added:', newTransaction.id);
+        if (newTransaction.isSplitPayment) {
+            console.log('   💰 Split payment detected:');
+            console.log('      Cash:', newTransaction.splitPayments.cash);
+            console.log('      M-Pesa:', newTransaction.splitPayments.mpesa);
+            console.log('      Bank:', newTransaction.splitPayments.bank);
+            console.log('      Total:', newTransaction.splitTotal);
+        }
+        if (newTransaction.profit) {
+            console.log('   📊 Profit:', profit);
+        }
+        
         return newTransaction;
     } catch (error) {
         console.error('addTransaction error:', error);

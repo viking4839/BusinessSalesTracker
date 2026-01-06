@@ -36,7 +36,9 @@ import SecurityScreen from './src/screens/SecurityScreen';
 import PinSetupScreen from './src/screens/PinSetupScreen';
 import PinUnlockScreen from './src/screens/PinUnlockScreen';
 import NotificationSettingsScreen from './src/screens/NotificationSettingsScreen';
-
+import BusinessRemindersScreen from './src/screens/BusinessRemindersScreen';
+import ReminderDetailScreen from './src/screens/ReminderDetailScreen';
+import ExpenseManagerScreen from './src/screens/ExpenseManagerScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -51,6 +53,9 @@ function HomeStack() {
       <Stack.Screen name="CreditManager" component={CreditManagerScreen} />
       <Stack.Screen name="ProfitMarginReport" component={ProfitMarginReportScreen} />
       <Stack.Screen name="Settings" component={SettingsStack} />
+      <Stack.Screen name="BusinessReminders" component={BusinessRemindersScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="ReminderDetail" component={ReminderDetailScreen} options={{ headerShown: false }} />
+      <Stack.Screen name="ExpenseManager" component={ExpenseManagerScreen} options={{ headerShown: false }} />
     </Stack.Navigator>
   );
 }
@@ -72,6 +77,8 @@ function InventoryStack() {
       <Stack.Screen name="InventoryMain" component={InventoryScreen} />
       <Stack.Screen name="AddInventoryItem" component={InventoryScreen} />
       <Stack.Screen name="EditInventoryItem" component={EditInventoryItemScreen} />
+      <Stack.Screen name="ReminderDetail" component={ReminderDetailScreen} options={{ headerShown: false }}
+      />
     </Stack.Navigator>
   );
 }
@@ -90,7 +97,7 @@ function SettingsStack() {
       <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicy} />
       <Stack.Screen name="RateApp" component={RateApp} />
       <Stack.Screen name="Security" component={SecurityScreen} />
-      <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} options={{ headerShown: false }}/>
+      <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} options={{ headerShown: false }} />
     </Stack.Navigator>
   );
 }

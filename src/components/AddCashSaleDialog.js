@@ -268,7 +268,7 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
             timestamp: new Date().toISOString(),
             items: [],
             isMultiItem: false,
-            paymentMethod: paymentMethod, // Keep the original payment method as fallback
+
         };
 
         // Add payment info
@@ -284,7 +284,7 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
             saleData.splitTotal = getSplitTotal();
 
             // Set payment method to "Split" instead of "Split Payment" for consistency
-            saleData.paymentMethod = 'Split';
+            saleData.paymentMethod = 'Split payment';
 
             // Include individual payment method details
             saleData.paymentBreakdown = [];
@@ -357,7 +357,9 @@ const AddCashSaleDialog = ({ visible, onClose, onAddSale, navigation }) => {
         }
 
         // Debug log to see what's being sent
-        console.log('Sale Data being sent:', JSON.stringify(saleData, null, 2));
+        if (__DEV__) {
+            console.log('Sale Data being sent:', JSON.stringify(saleData, null, 2));
+        }
 
         onAddSale(saleData);
         resetForm();

@@ -29,6 +29,8 @@ import {
   Package,
   AlertTriangle,
   Zap,
+  Bell,
+  Receipt,
   RefreshCw,
 } from 'lucide-react-native';
 import SMSReader from '../services/SMSReader';
@@ -41,7 +43,8 @@ import BankCard from '../components/BankCard';
 import AddCashSaleDialog from '../components/AddCashSaleDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
+import ReminderStorage from '../utils/ReminderStorage';
+import ExpenseStorage from '../utils/ExpenseStorage';
 
 const { width } = Dimensions.get('window');
 
@@ -70,8 +73,17 @@ const HomeScreen = ({ navigation, route }) => {
     itemsSold: 0,
     bestSeller: null
   });
+  const [reminderStats, setReminderStats] = useState({
+    active: 0,
+    today: 0,
+    overdue: 0
+  });
   const [todayMoneyOut, setTodayMoneyOut] = useState(0); // Add this state
   const [smsScanEnabled, setSmsScanEnabled] = useState(true);
+  const [expenseStats, setExpenseStats] = useState({
+    today: 0,
+    count: 0
+  });
 
   // Initialize on mount
   useEffect(() => {
@@ -79,6 +91,8 @@ const HomeScreen = ({ navigation, route }) => {
     loadStoredTransactions();
     requestSMSPermission();
     loadSmsScanSetting();
+    loadReminderStats();
+    loadExpenseStats();
 
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
@@ -99,6 +113,8 @@ const HomeScreen = ({ navigation, route }) => {
       loadCreditStats();
       loadProfitStats();
       loadSmsScanSetting();
+      loadReminderStats();
+      loadExpenseStats();
     }, [])
   );
 
@@ -128,6 +144,7 @@ const HomeScreen = ({ navigation, route }) => {
       setTodayRevenue(0);
       setWeekRevenue(0);
       setMonthRevenue(0);
+
     });
     return () => sub.remove();
   }, []);
@@ -207,6 +224,32 @@ const HomeScreen = ({ navigation, route }) => {
       setActiveBanks(buildActiveBanks(normalized));
     } catch (error) {
       console.error('loadStoredTransactions error:', error);
+    }
+  };
+
+  const loadExpenseStats = async () => {
+    try {
+      const stats = await ExpenseStorage.getTodayStats();
+      setExpenseStats({
+        today: stats.total,
+        count: stats.count
+      });
+      console.log('✅ Expense stats loaded:', stats.total);
+    } catch (error) {
+      console.error('Error loading expense stats:', error);
+    }
+  };
+
+  const loadReminderStats = async () => {
+    try {
+      const stats = await ReminderStorage.getStats();
+      setReminderStats({
+        active: stats.active,
+        today: stats.today,
+        overdue: stats.overdue
+      });
+    } catch (error) {
+      console.error('Error loading reminder stats:', error);
     }
   };
 
@@ -439,6 +482,15 @@ const HomeScreen = ({ navigation, route }) => {
         linkedInventoryName: saleData.linkedInventoryName || null,
         saleQuantity: saleData.saleQuantity || null,
         stockDeducted: !!saleData.linkedInventoryId || (saleData.items && saleData.items.length > 0),
+        isSplitPayment: saleData.isSplitPayment || false,
+        splitPayments: saleData.splitPayments || null,
+        splitTotal: saleData.splitTotal || null,
+        paymentBreakdown: saleData.paymentBreakdown || null,
+        saleUnitPrice: saleData.saleUnitPrice || null,
+        discount: saleData.discount || null,
+        subtotal: saleData.subtotal || null
+
+
       };
 
       console.log('💵 Adding manual sale:', newTransaction);
@@ -473,8 +525,29 @@ const HomeScreen = ({ navigation, route }) => {
   };
 
   const loadProfitStats = async () => {
+    // 1. Get base stats from standard Sales
     const stats = await ProfitReportStorage.getTodaysProfitStats();
-    setProfitStats(stats);
+
+    // 2. Calculate Credit Profit for Today (The Missing Link)
+    const allTxns = await TransactionStorage.loadTransactions();
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const todayCreditProfit = allTxns
+      .filter(t => {
+        // Check if transaction is today AND is a credit payment
+        const tDate = (t.date || t.timestamp || '').split('T')[0];
+        return tDate === todayStr &&
+          (t.paymentMethod === 'credit_payment' ||
+            t.paymentMethod === 'credit_cleared' ||
+            t.isCreditPayment === true);
+      })
+      .reduce((sum, t) => sum + (Number(t.profit) || 0), 0);
+
+    // 3. Combine Sales Profit + Credit Profit
+    setProfitStats({
+      ...stats,
+      todayProfit: (stats.todayProfit || 0) + todayCreditProfit
+    });
   };
 
   const getGrowthPercentage = () => {
@@ -601,21 +674,46 @@ const HomeScreen = ({ navigation, route }) => {
       >
         {/* Metrics Grid - Enhanced */}
         <View style={styles.metricsGrid}>
-          <View style={styles.metricCard}>
-            <View style={[styles.metricIconContainer, { backgroundColor: '#DBEAFE' }]}>
-              <BarChart3 size={20} color="#2563EB" />
+          <TouchableOpacity
+            style={styles.metricCard}
+            onPress={() => navigation.navigate('ExpenseManager')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.metricIconContainer, { backgroundColor: '#FEE2E2' }]}>
+              <Receipt size={20} color="#DC2626" />
             </View>
-            <Text style={styles.metricLabel}>Business Trans.</Text>
-            <Text style={styles.metricValue}>{businessTransactionCount}</Text>
-          </View>
+            <Text style={styles.metricLabel}>Expenses & Bills</Text>
+            <Text style={styles.metricValue}>
+              Ksh {expenseStats.today.toLocaleString()}
+            </Text>
+            {expenseStats.count > 0 && (
+              <Text style={styles.subMetric}>
+                {expenseStats.count} expense{expenseStats.count !== 1 ? 's' : ''} today
+              </Text>
+            )}
+          </TouchableOpacity>
 
-          <View style={styles.metricCard}>
-            <View style={[styles.metricIconContainer, { backgroundColor: '#E0E7FF' }]}>
-              <Activity size={20} color="#6366F1" />
+          <TouchableOpacity
+            style={styles.metricCard}
+            onPress={() => navigation.navigate('BusinessReminders')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.metricIconContainer, { backgroundColor: Colors.warning + '15' }]}>
+              <Bell size={18} color={Colors.warning} />
             </View>
-            <Text style={styles.metricLabel}>Total Trans.</Text>
-            <Text style={styles.metricValue}>{transactionCount}</Text>
-          </View>
+            <Text style={styles.metricLabel}>Reminders</Text>
+            <Text style={styles.metricValue}>{reminderStats.active}</Text>
+            {reminderStats.today > 0 && (
+              <View style={styles.todayBadge}>
+                <Text style={styles.todayBadgeText}>{reminderStats.today} today</Text>
+              </View>
+            )}
+            {reminderStats.overdue > 0 && (
+              <View style={styles.overdueBadge}>
+                <Text style={styles.overdueBadgeText}>{reminderStats.overdue} overdue</Text>
+              </View>
+            )}
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.metricCard}
@@ -1036,6 +1134,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     gap: 12,
     marginBottom: Spacing.md,
+  },
+
+  todayBadge: {
+    backgroundColor: Colors.primary + '15',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginTop: 4,
+  },
+  todayBadgeText: {
+    fontSize: 10,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  overdueBadge: {
+    backgroundColor: Colors.error + '15',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginTop: 4,
+  },
+  overdueBadgeText: {
+    fontSize: 10,
+    color: Colors.error,
+    fontWeight: '600',
   },
   // SCAN BUTTON - NEW GRADIENT STYLE
   scanButton: {

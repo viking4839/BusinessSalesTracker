@@ -31,7 +31,7 @@ export const ProfitReportStorage = {
           const match = t.inventoryMatch;
           // Only include if user has confirmed the match
           if (!match.userConfirmed) {
-            console.log(`⏭️ Skipping unconfirmed transaction: ${t.sender} - Ksh ${t.amount}`);
+            console.log(`⭐️ Skipping unconfirmed transaction: ${t.sender} - Ksh ${t.amount}`);
             return false;
           }
         }
@@ -189,6 +189,7 @@ export const ProfitReportStorage = {
     }
   },
 
+
   // Load report for specific date
   async loadReport(date) {
     try {
@@ -200,14 +201,33 @@ export const ProfitReportStorage = {
         return existingReport;
       }
 
-      // If no existing report, generate a new one
-      return await this.generateTodaysReport();
+      // ✅ FIX: Only generate new report if date is TODAY
+      const today = new Date().toISOString().split('T')[0];
+      if (date === today) {
+        // Check if there are actually transactions today before generating
+        const transactions = await TransactionStorage.loadTransactions();
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        const hasTodayTransactions = transactions.some(t => {
+          const txDate = new Date(t.timestamp);
+          return txDate >= todayStart && txDate <= todayEnd;
+        });
+
+        if (hasTodayTransactions) {
+          return await this.generateTodaysReport();
+        }
+      }
+
+      // If no report exists and it's not today (or no transactions), return null
+      return null;
     } catch (error) {
       console.error('Error loading report:', error);
       return null;
     }
   },
-
   // Get weekly reports
   async getWeeklyReports() {
     try {
@@ -246,16 +266,47 @@ export const ProfitReportStorage = {
     }
   },
 
-  // Get profit stats for HomeScreen metric card
+
+  // ✅ FIXED: Get today's profit stats (updated format for ExpenseManagerScreen)
   async getTodaysProfitStats() {
     try {
       const today = new Date().toISOString().split('T')[0];
-      const report = await this.loadReport(today);
+
+      // First check if we have a saved report for today
+      const reports = await this.loadAllReports();
+      let report = reports[today];
+
+      // Only generate new report if we don't have one AND there are transactions today
+      if (!report) {
+        const transactions = await TransactionStorage.loadTransactions();
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        // Check if there are ANY transactions today
+        const hasTodayTransactions = transactions.some(t => {
+          const txDate = new Date(t.timestamp);
+          return txDate >= todayStart && txDate <= todayEnd;
+        });
+
+        // Only generate if there are actually transactions today
+        if (hasTodayTransactions) {
+          report = await this.generateTodaysReport();
+        }
+      }
 
       if (!report) {
         return {
-          todayProfit: 0,
+          totalSales: 0,
+          totalProfit: 0,
+          totalTransactions: 0,
+          averageDailySales: 0,
+          averageDailyProfit: 0,
+          bestSellingItem: null,
           margin: 0,
+          // Legacy fields for backward compatibility
+          todayProfit: 0,
           itemsSold: 0,
           bestSeller: null
         };
@@ -264,18 +315,160 @@ export const ProfitReportStorage = {
       const itemsSold = report.items.reduce((total, item) => total + item.sold, 0);
 
       return {
+        totalSales: report.totalSales || 0,
+        totalProfit: report.totalProfit || 0,
+        totalTransactions: report.transactionCount || 0,
+        averageDailySales: report.totalSales || 0,
+        averageDailyProfit: report.totalProfit || 0,
+        bestSellingItem: report.bestSellingItem,
+        margin: report.margin || 0,
+        // Legacy fields for backward compatibility
         todayProfit: report.totalProfit,
-        margin: report.margin,
         itemsSold: itemsSold,
         bestSeller: report.bestSellingItem
       };
     } catch (error) {
       console.error('Error getting today stats:', error);
       return {
-        todayProfit: 0,
+        totalSales: 0,
+        totalProfit: 0,
+        totalTransactions: 0,
+        averageDailySales: 0,
+        averageDailyProfit: 0,
+        bestSellingItem: null,
         margin: 0,
+        todayProfit: 0,
         itemsSold: 0,
         bestSeller: null
+      };
+    }
+  },
+
+  // ✅ NEW: Get weekly profit stats (total sales for last 7 days)
+  async getWeeklyProfitStats() {
+    try {
+      const today = new Date();
+      const weekAgo = new Date();
+      weekAgo.setDate(today.getDate() - 7);
+
+      // Get all reports
+      const reports = await this.loadAllReports();
+
+      // Filter for last 7 days
+      const weeklyReports = Object.entries(reports)
+        .filter(([date]) => {
+          const reportDate = new Date(date);
+          return reportDate >= weekAgo && reportDate <= today;
+        })
+        .map(([date, report]) => report);
+
+      // Calculate totals
+      const totalSales = weeklyReports.reduce((sum, report) => sum + (report.totalSales || 0), 0);
+      const totalProfit = weeklyReports.reduce((sum, report) => sum + (report.totalProfit || 0), 0);
+      const totalTransactions = weeklyReports.reduce((sum, report) => sum + (report.transactionCount || 0), 0);
+
+      // Find best selling item for the week
+      const allItems = {};
+      weeklyReports.forEach(report => {
+        report.items?.forEach(item => {
+          const key = item.id || item.name;
+          if (!allItems[key]) {
+            allItems[key] = { ...item };
+          } else {
+            allItems[key].sold += item.sold || 0;
+            allItems[key].profit += item.profit || 0;
+          }
+        });
+      });
+
+      const bestSellingItem = Object.values(allItems).reduce((best, current) =>
+        current.sold > (best?.sold || 0) ? current : best, null
+      );
+
+      return {
+        totalSales,
+        totalProfit,
+        totalTransactions,
+        averageDailySales: totalSales / 7,
+        averageDailyProfit: totalProfit / 7,
+        bestSellingItem,
+        margin: totalSales > 0 ? (totalProfit / totalSales * 100) : 0
+      };
+    } catch (error) {
+      console.error('Error getting weekly profit stats:', error);
+      return {
+        totalSales: 0,
+        totalProfit: 0,
+        totalTransactions: 0,
+        averageDailySales: 0,
+        averageDailyProfit: 0,
+        bestSellingItem: null,
+        margin: 0
+      };
+    }
+  },
+
+  // ✅ NEW: Get monthly profit stats (total sales for current month)
+  async getMonthlyProfitStats() {
+    try {
+      const today = new Date();
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+      // Get all reports
+      const reports = await this.loadAllReports();
+
+      // Filter for current month
+      const monthlyReports = Object.entries(reports)
+        .filter(([date]) => {
+          const reportDate = new Date(date);
+          return reportDate >= monthStart && reportDate <= today;
+        })
+        .map(([date, report]) => report);
+
+      // Calculate totals
+      const totalSales = monthlyReports.reduce((sum, report) => sum + (report.totalSales || 0), 0);
+      const totalProfit = monthlyReports.reduce((sum, report) => sum + (report.totalProfit || 0), 0);
+      const totalTransactions = monthlyReports.reduce((sum, report) => sum + (report.transactionCount || 0), 0);
+
+      // Find best selling item for the month
+      const allItems = {};
+      monthlyReports.forEach(report => {
+        report.items?.forEach(item => {
+          const key = item.id || item.name;
+          if (!allItems[key]) {
+            allItems[key] = { ...item };
+          } else {
+            allItems[key].sold += item.sold || 0;
+            allItems[key].profit += item.profit || 0;
+          }
+        });
+      });
+
+      const bestSellingItem = Object.values(allItems).reduce((best, current) =>
+        current.sold > (best?.sold || 0) ? current : best, null
+      );
+
+      const daysInMonth = today.getDate(); // Days passed in current month
+
+      return {
+        totalSales,
+        totalProfit,
+        totalTransactions,
+        averageDailySales: daysInMonth > 0 ? totalSales / daysInMonth : 0,
+        averageDailyProfit: daysInMonth > 0 ? totalProfit / daysInMonth : 0,
+        bestSellingItem,
+        margin: totalSales > 0 ? (totalProfit / totalSales * 100) : 0
+      };
+    } catch (error) {
+      console.error('Error getting monthly profit stats:', error);
+      return {
+        totalSales: 0,
+        totalProfit: 0,
+        totalTransactions: 0,
+        averageDailySales: 0,
+        averageDailyProfit: 0,
+        bestSellingItem: null,
+        margin: 0
       };
     }
   },

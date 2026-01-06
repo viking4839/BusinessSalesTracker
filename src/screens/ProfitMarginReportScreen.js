@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
     View,
     Text,
@@ -10,6 +10,7 @@ import {
     Alert,
     ActivityIndicator,
     Dimensions,
+    DeviceEventEmitter,
 } from 'react-native';
 import {
     TrendingUp,
@@ -52,6 +53,27 @@ const ProfitMarginReportScreen = ({ navigation }) => {
             loadData();
         }, [])
     );
+
+    useEffect(() => {
+        console.log('🎧 Setting up credit update listeners');
+
+        const creditListener = DeviceEventEmitter.addListener('creditUpdated', () => {
+            console.log('📢 Received creditUpdated event - refreshing data');
+            loadData();
+        });
+
+        const profitListener = DeviceEventEmitter.addListener('profitReportUpdated', () => {
+            console.log('📢 Received profitReportUpdated event - refreshing data');
+            loadData();
+        });
+
+        // Cleanup listeners on unmount
+        return () => {
+            console.log('🔇 Removing credit update listeners');
+            creditListener.remove();
+            profitListener.remove();
+        };
+    }, []);
 
     const loadData = async () => {
         setRefreshing(true);
@@ -237,79 +259,119 @@ const ProfitMarginReportScreen = ({ navigation }) => {
         return 'Low';
     };
 
-    const renderSummaryCards = () => (
-        <View style={styles.summarySection}>
-            {/* Hero Card - Today's Profit */}
-            <View style={styles.heroCard}>
-                <View style={styles.heroHeader}>
-                    <View>
-                        <Text style={styles.heroLabel}>Today's Gross Profit</Text>
-                        <Text style={styles.heroValue}>{formatCurrency(todayReport?.totalProfit)}</Text>
+    const getCombinedTotals = () => {
+        const reportSales = todayReport?.totalSales || 0;
+        const reportCost = todayReport?.totalCost || 0;
+        const reportProfit = todayReport?.totalProfit || 0;
+
+        // Calculate credit totals
+        const creditAmount = creditTransactions.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+        const creditProfit = creditTransactions.reduce((sum, t) => sum + (Number(t.profit) || 0), 0);
+
+        // Combined totals
+        const combinedSales = reportSales + creditAmount;
+        const combinedCost = reportCost + (creditAmount - creditProfit); // Cost = amount - profit
+        const combinedProfit = reportProfit + creditProfit;
+
+        // Calculate combined margin
+        const combinedMargin = combinedSales > 0
+            ? Math.round((combinedProfit / combinedSales) * 100)
+            : 0;
+
+        return {
+            sales: combinedSales,
+            cost: combinedCost,
+            profit: combinedProfit,
+            margin: combinedMargin,
+            hasCreditData: creditAmount > 0,
+            creditAmount,
+            creditProfit
+        };
+    };
+
+
+
+    const renderSummaryCards = () => {
+        // 1. CALL THE HELPER FUNCTION TO GET COMBINED DATA
+        const totals = getCombinedTotals();
+
+        return (
+            <View style={styles.summarySection}>
+                {/* Hero Card - Today's Gross Profit (UPDATED TO USE COMBINED TOTALS) */}
+                <View style={styles.heroCard}>
+                    <View style={styles.heroHeader}>
+                        <View>
+                            <Text style={styles.heroLabel}>Today's Gross Profit</Text>
+                            {/* Uses totals.profit (Sales Profit + Credit Profit) */}
+                            <Text style={styles.heroValue}>{formatCurrency(totals.profit)}</Text>
+                        </View>
+                        <View style={[
+                            styles.marginBadge,
+                            { backgroundColor: getMarginColor(totals.margin || 0) + '20' }
+                        ]}>
+                            <Percent size={16} color={getMarginColor(totals.margin || 0)} />
+                            <Text style={[styles.marginValue, { color: getMarginColor(totals.margin || 0) }]}>
+                                {totals.margin || 0}%
+                            </Text>
+                        </View>
                     </View>
-                    <View style={[
-                        styles.marginBadge,
-                        { backgroundColor: getMarginColor(todayReport?.margin || 0) + '20' }
-                    ]}>
-                        <Percent size={16} color={getMarginColor(todayReport?.margin || 0)} />
-                        <Text style={[styles.marginValue, { color: getMarginColor(todayReport?.margin || 0) }]}>
-                            {todayReport?.margin || 0}%
-                        </Text>
+
+                    <View style={styles.heroFooter}>
+                        <View style={styles.heroStat}>
+                            <Text style={styles.heroStatLabel}>Total Revenue</Text>
+                            {/* Uses totals.sales (Regular Sales + Credit Collected) */}
+                            <Text style={styles.heroStatValue}>{formatCurrency(totals.sales)}</Text>
+                        </View>
+                        <View style={styles.heroDivider} />
+                        <View style={styles.heroStat}>
+                            <Text style={styles.heroStatLabel}>Total Cost</Text>
+                            <Text style={styles.heroStatValue}>{formatCurrency(totals.cost)}</Text>
+                        </View>
+                        <View style={styles.heroDivider} />
+                        <View style={styles.heroStat}>
+                            <Text style={styles.heroStatLabel}>Margin</Text>
+                            <Text style={[styles.heroStatValue, { color: getMarginColor(totals.margin || 0) }]}>
+                                {getMarginLabel(totals.margin || 0)}
+                            </Text>
+                        </View>
                     </View>
                 </View>
 
-                <View style={styles.heroFooter}>
-                    <View style={styles.heroStat}>
-                        <Text style={styles.heroStatLabel}>Sales</Text>
-                        <Text style={styles.heroStatValue}>{formatCurrency(todayReport?.totalSales)}</Text>
-                    </View>
-                    <View style={styles.heroDivider} />
-                    <View style={styles.heroStat}>
-                        <Text style={styles.heroStatLabel}>Cost</Text>
-                        <Text style={styles.heroStatValue}>{formatCurrency(todayReport?.totalCost)}</Text>
-                    </View>
-                    <View style={styles.heroDivider} />
-                    <View style={styles.heroStat}>
-                        <Text style={styles.heroStatLabel}>Margin</Text>
-                        <Text style={[styles.heroStatValue, { color: getMarginColor(todayReport?.margin || 0) }]}>
-                            {getMarginLabel(todayReport?.margin || 0)}
+                {/* Mini Stats Grid (Keeps original data for item counts) */}
+                <View style={styles.miniStatsGrid}>
+                    <View style={styles.miniStatCard}>
+                        <View style={[styles.miniStatIcon, { backgroundColor: '#EFF6FF' }]}>
+                            <ShoppingBag size={18} color="#2563EB" />
+                        </View>
+                        <Text style={styles.miniStatValue}>
+                            {(todayReport?.transactionCount || 0) + creditTransactions.length}
                         </Text>
+                        <Text style={styles.miniStatLabel}>Transactions</Text>
+                    </View>
+
+                    <View style={styles.miniStatCard}>
+                        <View style={[styles.miniStatIcon, { backgroundColor: '#F0FDF4' }]}>
+                            <Package size={18} color={Colors.success} />
+                        </View>
+                        <Text style={styles.miniStatValue}>{todayReport?.items?.length || 0}</Text>
+                        <Text style={styles.miniStatLabel}>Items Sold</Text>
+                    </View>
+
+                    <View style={styles.miniStatCard}>
+                        <View style={[styles.miniStatIcon, { backgroundColor: '#FEF3C7' }]}>
+                            <BarChart3 size={18} color="#F59E0B" />
+                        </View>
+                        <Text style={styles.miniStatValue}>
+                            {totals.sales > 0 && ((todayReport?.transactionCount || 0) + creditTransactions.length) > 0
+                                ? formatCurrency(totals.sales / ((todayReport?.transactionCount || 0) + creditTransactions.length))
+                                : 'Ksh 0'}
+                        </Text>
+                        <Text style={styles.miniStatLabel}>Avg. Value</Text>
                     </View>
                 </View>
             </View>
-
-            {/* Mini Stats Grid */}
-            <View style={styles.miniStatsGrid}>
-                <View style={styles.miniStatCard}>
-                    <View style={[styles.miniStatIcon, { backgroundColor: '#EFF6FF' }]}>
-                        <ShoppingBag size={18} color="#2563EB" />
-                    </View>
-                    <Text style={styles.miniStatValue}>{todayReport?.transactionCount || 0}</Text>
-                    <Text style={styles.miniStatLabel}>Transactions</Text>
-                </View>
-
-                <View style={styles.miniStatCard}>
-                    <View style={[styles.miniStatIcon, { backgroundColor: '#F0FDF4' }]}>
-                        <Package size={18} color={Colors.success} />
-                    </View>
-                    <Text style={styles.miniStatValue}>{todayReport?.items?.length || 0}</Text>
-                    <Text style={styles.miniStatLabel}>Items Sold</Text>
-                </View>
-
-                <View style={styles.miniStatCard}>
-                    <View style={[styles.miniStatIcon, { backgroundColor: '#FEF3C7' }]}>
-                        <BarChart3 size={18} color="#F59E0B" />
-                    </View>
-                    <Text style={styles.miniStatValue}>
-                        {todayReport?.totalSales > 0
-                            ? formatCurrency(todayReport?.totalSales / (todayReport?.transactionCount || 1))
-                            : 'Ksh 0'}
-                    </Text>
-                    <Text style={styles.miniStatLabel}>Avg. Sale</Text>
-                </View>
-            </View>
-        </View>
-    );
-
+        );
+    };
     const renderItemBreakdown = () => {
         if (!todayReport?.items || todayReport.items.length === 0) {
             return (
